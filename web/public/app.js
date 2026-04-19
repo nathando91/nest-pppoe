@@ -226,11 +226,84 @@ async function refreshStatus() {
     }
 }
 
+function getStatusBadge(status) {
+    switch (status) {
+        case 'connected': return '● ONLINE';
+        case 'rotating': return '🔄 ROTATING';
+        case 'connecting': return '⏳ CONNECTING';
+        case 'stopping': return '⏳ STOPPING';
+        default: return '○ OFFLINE';
+    }
+}
+
+function getStatusClass(status) {
+    if (status === 'rotating' || status === 'connecting') return 'rotating';
+    if (status === 'stopping') return 'stopping';
+    return status;
+}
+
+function renderSessionCard(s) {
+    const isBusyState = isBusy(`session-${s.id}`) || ['rotating', 'connecting', 'stopping'].includes(s.status);
+    const statusClass = getStatusClass(s.status);
+    const stepMsg = s.message || '';
+
+    return `
+    <div class="session-card ${statusClass}" data-session-id="${s.id}" data-status="${s.status}">
+        <div class="session-top">
+            <div class="session-id">
+                <span class="session-num">${s.iface}</span>
+                <span class="session-badge ${statusClass}">${getStatusBadge(s.status)}</span>
+            </div>
+        </div>
+        ${stepMsg ? `<div class="session-step">${escapeHtml(stepMsg)}</div>` : ''}
+        <div class="session-info">
+            <div class="session-field">
+                <span class="session-label">IP Address</span>
+                <span class="session-value ${s.ip ? 'ip' : 'no-ip'}">${s.ip || '---'}</span>
+            </div>
+            <div class="session-field">
+                <span class="session-label">Proxy Port</span>
+                <span class="session-value">${s.port || '---'}</span>
+            </div>
+            <div class="session-field">
+                <span class="session-label">Account</span>
+                <span class="session-value" style="font-size:10px">${escapeHtml(truncate(s.username || '', 22))}</span>
+            </div>
+            <div class="session-field">
+                <span class="session-label">Proxy</span>
+                <span class="session-value ${s.proxyStatus === 'running' ? 'ip' : 'no-ip'}">${s.proxyStatus || 'stopped'}</span>
+            </div>
+        </div>
+        <div class="session-actions">
+            ${s.status === 'stopped' ? `
+                <button class="session-btn start" onclick="startSession(${s.id})">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Start
+                </button>
+            ` : isBusyState ? `
+                <button class="session-btn rotate loading" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Đang xử lý...
+                </button>
+            ` : `
+                <button class="session-btn stop" onclick="stopSession(${s.id})">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    Stop
+                </button>
+                <button class="session-btn rotate" onclick="rotateSession(${s.id})">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Xoay IP
+                </button>
+            `}
+        </div>
+    </div>`;
+}
+
 function renderSessions(sessions) {
     const grid = document.getElementById('sessionsGrid');
     const filtered = sessions.filter(s => {
-        if (currentFilter === 'connected') return s.status === 'connected';
-        if (currentFilter === 'stopped') return s.status === 'stopped';
+        if (currentFilter === 'connected') return s.status === 'connected' || s.status === 'rotating' || s.status === 'connecting';
+        if (currentFilter === 'stopped') return s.status === 'stopped' || s.status === 'stopping';
         return true;
     });
 
@@ -244,53 +317,31 @@ function renderSessions(sessions) {
         return;
     }
 
-    grid.innerHTML = filtered.map(s => {
-        const isBusyState = isBusy(`session-${s.id}`);
-        return `
-        <div class="session-card ${s.status}" data-session-id="${s.id}" data-status="${s.status}">
-            <div class="session-top">
-                <div class="session-id">
-                    <span class="session-num">${s.iface}</span>
-                    <span class="session-badge ${s.status}">${s.status === 'connected' ? '● ONLINE' : '○ OFFLINE'}</span>
-                </div>
-            </div>
-            <div class="session-info">
-                <div class="session-field">
-                    <span class="session-label">IP Address</span>
-                    <span class="session-value ${s.ip ? 'ip' : 'no-ip'}">${s.ip || '---'}</span>
-                </div>
-                <div class="session-field">
-                    <span class="session-label">Proxy Port</span>
-                    <span class="session-value">${s.port || '---'}</span>
-                </div>
-                <div class="session-field">
-                    <span class="session-label">Account</span>
-                    <span class="session-value" style="font-size:10px">${escapeHtml(truncate(s.username, 22))}</span>
-                </div>
-                <div class="session-field">
-                    <span class="session-label">Proxy</span>
-                    <span class="session-value ${s.proxyStatus === 'running' ? 'ip' : 'no-ip'}">${s.proxyStatus}</span>
-                </div>
-            </div>
-            <div class="session-actions">
-                ${s.status === 'stopped' ? `
-                    <button class="session-btn start ${isBusyState ? 'loading' : ''}" onclick="startSession(${s.id})" ${isBusyState ? 'disabled' : ''}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        Start
-                    </button>
-                ` : `
-                    <button class="session-btn stop ${isBusyState ? 'loading' : ''}" onclick="stopSession(${s.id})" ${isBusyState ? 'disabled' : ''}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                        Stop
-                    </button>
-                    <button class="session-btn rotate ${isBusyState ? 'loading' : ''}" onclick="rotateSession(${s.id})" ${isBusyState ? 'disabled' : ''}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                        Xoay IP
-                    </button>
-                `}
-            </div>
-        </div>`;
-    }).join('');
+    grid.innerHTML = filtered.map(s => renderSessionCard(s)).join('');
+}
+
+// Update a single session card in-place without re-rendering the whole grid
+function updateSingleSession(data) {
+    // Merge live data into sessionsData
+    var idx = sessionsData.findIndex(s => s.id === data.id);
+    if (idx !== -1) {
+        if (data.ip !== undefined) sessionsData[idx].ip = data.ip;
+        if (data.port !== undefined) sessionsData[idx].port = data.port;
+        if (data.status) sessionsData[idx].status = data.status;
+        if (data.proxyStatus) sessionsData[idx].proxyStatus = data.proxyStatus;
+        sessionsData[idx].message = data.message || '';
+        sessionsData[idx].step = data.step || '';
+    }
+
+    // Find the card in the DOM and update it
+    var card = document.querySelector('[data-session-id="' + data.id + '"]');
+    if (card) {
+        var s = idx !== -1 ? sessionsData[idx] : data;
+        var temp = document.createElement('div');
+        temp.innerHTML = renderSessionCard(s);
+        var newCard = temp.firstElementChild;
+        card.replaceWith(newCard);
+    }
 }
 
 function filterSessions(filter) {
@@ -442,18 +493,31 @@ socket.on('rotate_log', (data) => {
 socket.on('session_update', (data) => {
     clearBusy(`session-${data.id}`);
     const hasOK = data.output && data.output.includes('OK');
+    const hasFail = data.output && (data.output.includes('FAIL') || data.output.includes('ERROR'));
     const hasSuccess = data.output && (data.output.includes('✅') || data.output.includes('Stopped'));
     if (hasOK || hasSuccess) {
         showToast(`✅ ppp${data.id} hoạt động`, 'success');
+    } else if (hasFail) {
+        showToast(`❌ ppp${data.id} thất bại`, 'error');
     }
-    // Immediately fetch fresh data from server to update IP/port
+    // Fetch fresh data to sync everything
     refreshStatus();
-    // Also refresh again after a short delay to catch late-settling changes
-    setTimeout(refreshStatus, 3000);
+});
+
+socket.on('session_live_update', (data) => {
+    // Real-time step-by-step update for a single session card
+    updateSingleSession(data);
 });
 
 socket.on('status_update', (data) => {
     cleanStaleBusy(); // Auto-clear any stuck loading states
+    // Preserve live state for sessions that are currently rotating/connecting/stopping
+    data.sessions.forEach((s, i) => {
+        var existing = sessionsData.find(e => e.id === s.id);
+        if (existing && ['rotating', 'connecting', 'stopping'].includes(existing.status)) {
+            data.sessions[i] = existing; // Keep the live state
+        }
+    });
     sessionsData = data.sessions;
     renderSessions(data.sessions);
     updateStats(data.stats);

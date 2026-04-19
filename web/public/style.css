@@ -630,12 +630,92 @@ body {
     box-shadow: var(--shadow-glow-green);
 }
 
+.session-card.rotating::before {
+    background: linear-gradient(135deg, #a855f7, #f59e0b);
+    opacity: 1;
+    animation: rotatePulse 1s ease-in-out infinite;
+}
+
+.session-card.rotating {
+    border-color: rgba(168, 85, 247, 0.3);
+    animation: cardPulse 2s ease-in-out infinite;
+}
+
+.session-card.connecting::before {
+    background: var(--grad-green);
+    opacity: 1;
+    animation: rotatePulse 1s ease-in-out infinite;
+}
+
+.session-card.connecting {
+    border-color: rgba(34, 197, 94, 0.3);
+    animation: cardPulse 2s ease-in-out infinite;
+}
+
+.session-card.stopping::before {
+    background: var(--grad-red);
+    opacity: 1;
+    animation: rotatePulse 1s ease-in-out infinite;
+}
+
+.session-card.stopping {
+    border-color: rgba(239, 68, 68, 0.3);
+    animation: cardPulse 2s ease-in-out infinite;
+}
+
 .session-card.stopped {
     opacity: 0.6;
 }
 
 .session-card.stopped:hover {
     opacity: 1;
+}
+
+@keyframes rotatePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+@keyframes cardPulse {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.1); }
+}
+
+.session-step {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--amber-400);
+    padding: 4px 10px;
+    margin-bottom: 10px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    border-radius: 6px;
+    text-align: center;
+    animation: stepPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes stepPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.session-badge.rotating {
+    background: rgba(168,85,247,0.12);
+    color: var(--purple-400);
+    border: 1px solid rgba(168,85,247,0.2);
+    animation: badgePulse 1s ease-in-out infinite;
+}
+
+.session-badge.stopping {
+    background: rgba(239,68,68,0.12);
+    color: var(--red-400);
+    border: 1px solid rgba(239,68,68,0.2);
+    animation: badgePulse 1s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
 }
 
 .session-top {
