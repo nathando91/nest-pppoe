@@ -1,7 +1,6 @@
-const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { readConfig, writeConfig, BASE_DIR, PROXY_DIR, PROXIES_FILE } = require('./config');
+const { readConfig, writeConfig, BASE_DIR, PROXY_DIR, PROXIES_FILE, LOG_DIR, INTERFACE } = require('./config');
 const { getNetworkInterfaces, getPPPoEStatus, getSystemStats } = require('./status');
 const { connectPppoe, setupProxy, killProxy, killPppd, rebuildMacvlan, getSessionIP, getProxyPort, sleep, shellExec } = require('./pppoe');
 
@@ -54,26 +53,141 @@ function registerRoutes(app, io) {
 
     // ============ BULK ACTIONS ============
 
-    // Install still uses shell script (system-level setup: macvlan, peer files, credentials)
+    // Install (native Node.js)
     app.post('/api/install', function(req, res) {
         res.json({ success: true, message: 'Installing...' });
-        var child = spawn('bash', [path.join(BASE_DIR, 'install.sh')], {
-            cwd: BASE_DIR,
-            env: Object.assign({}, process.env, { PATH: process.env.PATH })
-        });
-        var output = '';
-        child.stdout.on('data', function(data) {
-            output += data.toString();
-            io.emit('install_log', data.toString());
-        });
-        child.stderr.on('data', function(data) {
-            output += data.toString();
-            io.emit('install_log', data.toString());
-        });
-        child.on('close', function(code) {
-            io.emit('install_complete', { code: code, output: output });
-            io.emit('refresh');
-        });
+
+        (async function() {
+            try {
+                var config = readConfig();
+                var numAccounts = config.pppoe ? config.pppoe.length : 0;
+                if (numAccounts === 0) {
+                    io.emit('install_log', '❌ Chưa có account PPPoE nào trong config!\n');
+                    io.emit('install_complete', { code: 1, output: 'No accounts' });
+                    return;
+                }
+
+                var NUM = numAccounts * 30;
+                var PEER_DIR = '/etc/ppp/peers';
+                var username = config.pppoe[0].username;
+                var password = config.pppoe[0].password;
+
+                io.emit('install_log', '============================================\n');
+                io.emit('install_log', '  INSTALL - ' + NUM + ' PPPoE Sessions + 3proxy\n');
+                io.emit('install_log', '============================================\n\n');
+                io.emit('install_log', '[*] Account: ' + username + '\n');
+                io.emit('install_log', '[*] Interface: ' + INTERFACE + '\n\n');
+
+                // --- 1. Create directories ---
+                io.emit('install_log', '[1/5] Tạo thư mục...\n');
+                await shellExec('mkdir -p "' + PROXY_DIR + '" "' + LOG_DIR + '" "' + PEER_DIR + '"');
+
+                // --- 2. Configure credentials ---
+                io.emit('install_log', '[2/5] Cấu hình credentials...\n');
+                var credLine = '"' + username + '" * "' + password + '" *';
+                var secretFiles = ['/etc/ppp/chap-secrets', '/etc/ppp/pap-secrets'];
+                for (var sf = 0; sf < secretFiles.length; sf++) {
+                    var secretFile = secretFiles[sf];
+                    try {
+                        var content = '';
+                        try { content = fs.readFileSync(secretFile, 'utf8'); } catch (e) { /* new file */ }
+                        // Remove old lines for this username
+                        var lines = content.split('\n').filter(function(line) {
+                            return line.indexOf(username) === -1;
+                        });
+                        lines.push(credLine);
+                        fs.writeFileSync(secretFile, lines.join('\n') + '\n', { mode: 0o600 });
+                    } catch (e) {
+                        fs.writeFileSync(secretFile, credLine + '\n', { mode: 0o600 });
+                    }
+                }
+                io.emit('install_log', '    ✅ chap-secrets & pap-secrets\n');
+
+                // --- 3. Create macvlan interfaces ---
+                io.emit('install_log', '[3/5] Tạo ' + NUM + ' macvlan interfaces...\n');
+                // ppp0 uses enp1s0f0 directly, ppp1+ use macvlan
+                for (var i = 1; i < NUM; i++) {
+                    var macvlan = 'macppp' + i;
+                    await shellExec('ip link del "' + macvlan + '" 2>/dev/null');
+                    await shellExec('ip link add link "' + INTERFACE + '" "' + macvlan + '" type macvlan mode bridge');
+                    var hexI = ('0' + Math.floor(i / 256).toString(16)).slice(-2) + ':' +
+                               ('0' + (i % 256).toString(16)).slice(-2);
+                    await shellExec('ip link set "' + macvlan + '" address "02:00:00:00:' + hexI + '"');
+                    await shellExec('ip link set "' + macvlan + '" up');
+                }
+                io.emit('install_log', '    ✅ macppp1 - macppp' + (NUM - 1) + ' created\n');
+
+                // --- 4. Create peer files ---
+                io.emit('install_log', '[4/5] Tạo ' + NUM + ' peer files...\n');
+                for (var p = 0; p < NUM; p++) {
+                    var nic = p === 0 ? INTERFACE : 'macppp' + p;
+                    var peerContent = [
+                        'plugin pppoe.so',
+                        'nic-' + nic,
+                        'user "' + username + '"',
+                        'unit ' + p,
+                        'noipdefault',
+                        'nodefaultroute',
+                        'hide-password',
+                        'noauth',
+                        'persist',
+                        'maxfail 5',
+                        'holdoff 5',
+                        'mtu 1492',
+                        'mru 1492',
+                        'lcp-echo-interval 20',
+                        'lcp-echo-failure 3',
+                        'usepeerdns'
+                    ].join('\n') + '\n';
+                    fs.writeFileSync(path.join(PEER_DIR, 'nest_ppp' + p), peerContent);
+                }
+                io.emit('install_log', '    ✅ nest_ppp0 - nest_ppp' + (NUM - 1) + '\n');
+
+                // --- 5. Create 3proxy config templates ---
+                io.emit('install_log', '[5/5] Tạo ' + NUM + ' 3proxy configs (template)...\n');
+                var BASE_PORT = 8081;
+                for (var c = 0; c < NUM; c++) {
+                    var tplPort = BASE_PORT + c;
+                    var tplContent = [
+                        '# 3proxy config for ppp' + c,
+                        '# __PPP_IP__ sẽ được thay thế khi start',
+                        '',
+                        'nserver 8.8.8.8',
+                        'nserver 8.8.4.4',
+                        '',
+                        'log ' + LOG_DIR + '/3proxy_ppp' + c + '.log D',
+                        'logformat "L%t %N:%p %E %C:%c %R:%r %O %I %h %T"',
+                        '',
+                        'timeouts 1 5 30 60 180 1800 15 60',
+                        '',
+                        'auth none',
+                        'allow *',
+                        '',
+                        'external __PPP_IP__',
+                        'proxy -p__PORT__ -i0.0.0.0 -e__PPP_IP__'
+                    ].join('\n') + '\n';
+                    fs.writeFileSync(path.join(PROXY_DIR, '3proxy_ppp' + c + '.cfg'), tplContent);
+                }
+
+                // Remove legacy tinyproxy configs
+                await shellExec('rm -f "' + PROXY_DIR + '"/tinyproxy_*.conf 2>/dev/null');
+                io.emit('install_log', '    ✅ 3proxy configs ppp0-ppp' + (NUM - 1) + '\n');
+
+                io.emit('install_log', '\n============================================\n');
+                io.emit('install_log', '  ✅ INSTALL COMPLETE\n');
+                io.emit('install_log', '============================================\n');
+                io.emit('install_log', '  Peer files : ' + PEER_DIR + '/nest_ppp{0..' + (NUM - 1) + '}\n');
+                io.emit('install_log', '  Macvlan    : macppp{1..' + (NUM - 1) + '}\n');
+                io.emit('install_log', '  3proxy conf: ' + PROXY_DIR + '/3proxy_ppp{0..' + (NUM - 1) + '}.cfg\n');
+                io.emit('install_log', '============================================\n');
+
+                io.emit('install_complete', { code: 0, output: 'Install complete' });
+                io.emit('refresh');
+            } catch (err) {
+                io.emit('install_log', '❌ Lỗi: ' + err.message + '\n');
+                io.emit('install_complete', { code: 1, output: 'ERROR: ' + err.message });
+            }
+        })();
     });
 
     // ============ STOP ALL (native) ============
