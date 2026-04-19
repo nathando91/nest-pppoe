@@ -1,0 +1,15 @@
+# Logs
+logs/
+*.log
+
+# Runtime generated files
+proxies.txt
+benchmark_result.txt
+proxy/
+
+# 3proxy configs (generated at runtime)
+3proxy_*.cfg
+
+# Python
+__pycache__/
+*.pyc
