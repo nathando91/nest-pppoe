@@ -13,3 +13,5 @@ proxy/
 # Python
 __pycache__/
 *.pyc
+
+node_modules

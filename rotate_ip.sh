@@ -1,24 +1,36 @@
 #!/bin/bash
 #
 # rotate_ip.sh - Xoay IP cho 1 phiên PPPoE cụ thể
-# Usage: bash rotate_ip.sh <ppp_id>
-# Ví dụ: bash rotate_ip.sh 1    → xoay IP cho ppp1
+# Usage: bash rotate_ip.sh <ppp_id> [--fast]
 #
-# Cơ chế: huỷ hoàn toàn phiên PPPoE, tạo lại macvlan mới với MAC random.
-# Nếu IP không đổi → huỷ tiếp, chờ 30s cho ISP release, rồi thử lại.
+# Cơ chế:
+#   1. Disconnect pppd (giữ nguyên macvlan)
+#   2. Reconnect → nếu đổi IP → xong!
+#   3. Nếu trùng IP → huỷ macvlan, tạo mới MAC random, reconnect
+#   --fast: chỉ thử bước 1+2, bỏ qua bước 3
 
 PROXIES_FILE="/root/nest/proxies.txt"
 PROXY_DIR="/root/nest/proxy"
 LOG_DIR="/root/nest/logs"
 INTERFACE="enp1s0f0"
+FAST_MODE=false
 
+# Parse args
 if [ -z "$1" ]; then
-    echo "Usage: bash rotate_ip.sh <ppp_id>"
+    echo "Usage: bash rotate_ip.sh <ppp_id> [--fast]"
     echo "Ví dụ: bash rotate_ip.sh 1"
     exit 1
 fi
 
 ID=$1
+shift
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fast) FAST_MODE=true ;;
+    esac
+    shift
+done
+
 IFACE="ppp${ID}"
 PEER="nest_ppp${ID}"
 RUNTIME_CFG="${PROXY_DIR}/3proxy_ppp${ID}_active.cfg"
@@ -26,58 +38,55 @@ LINE_NUM=$((ID + 1))
 
 # ========== HÀM TIỆN ÍCH ==========
 
-kill_pppoe() {
-    # Kill 3proxy cho port này
+kill_proxy() {
     local PORT=$(grep -oP 'proxy -p\K\d+' "$RUNTIME_CFG" 2>/dev/null || echo "")
     if [ -n "$PORT" ]; then
         local PID=$(lsof -ti :${PORT} 2>/dev/null || echo "")
         [ -n "$PID" ] && kill $PID 2>/dev/null || true
     fi
+}
 
-    # Kill pppd
+kill_pppd_only() {
+    # Kill pppd nhưng KHÔNG xoá macvlan
     local PPPD_PID=$(cat "/var/run/ppp${ID}.pid" 2>/dev/null || echo "")
     if [ -n "$PPPD_PID" ]; then
         kill "$PPPD_PID" 2>/dev/null || true
-        sleep 2
+        for w in $(seq 1 5); do
+            kill -0 "$PPPD_PID" 2>/dev/null || break
+            sleep 1
+        done
         kill -9 "$PPPD_PID" 2>/dev/null || true
     fi
-
-    # Đợi interface biến mất
+    # Đợi interface down
     for w in $(seq 1 5); do
         ip link show "$IFACE" 2>/dev/null || break
         sleep 1
     done
-
-    # Xoá macvlan
-    if [ "$ID" -gt 0 ]; then
-        ip link set "macppp${ID}" down 2>/dev/null || true
-        ip link del "macppp${ID}" 2>/dev/null || true
-    fi
-
-    # Xoá routing rules
-    local TBL=$((100 + ID))
-    ip route flush table "$TBL" 2>/dev/null || true
 }
 
-start_pppoe() {
-    # Tạo macvlan mới với MAC random (ppp1-29)
+rebuild_macvlan() {
+    # Xoá macvlan cũ, tạo mới với MAC random
     if [ "$ID" -gt 0 ]; then
         local MACVLAN="macppp${ID}"
         local MAC=$(printf '02:%02x:%02x:%02x:%02x:%02x' \
             $((RANDOM % 256)) $((RANDOM % 256)) $((RANDOM % 256)) \
             $((RANDOM % 256)) $((RANDOM % 256)))
 
-        echo "   Tạo $MACVLAN (MAC: $MAC)..." >&2
+        echo "   Tạo lại $MACVLAN (MAC: $MAC)..." >&2
+        ip link set "$MACVLAN" down 2>/dev/null || true
+        ip link del "$MACVLAN" 2>/dev/null || true
         ip link add link "$INTERFACE" "$MACVLAN" type macvlan mode bridge
         ip link set "$MACVLAN" address "$MAC"
         ip link set "$MACVLAN" up
         sleep 1
+    else
+        echo "   ppp0 (interface gốc) - chờ ISP release..." >&2
+        sleep 8
     fi
+}
 
-    echo "   Kết nối PPPoE..." >&2
-    pppd call "$PEER" &
-
-    # Đợi IP (tối đa 20s)
+connect_pppoe() {
+    pppd call "$PEER" >/dev/null 2>&1 &
     local GOT_IP=""
     for w in $(seq 1 20); do
         local IP=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet \K[\d.]+')
@@ -88,6 +97,52 @@ start_pppoe() {
         sleep 1
     done
     echo "$GOT_IP"
+}
+
+setup_proxy() {
+    local IP=$1
+    local TABLE=$((100 + ID))
+
+    # Policy routing
+    ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null
+    ip rule del from "$IP" 2>/dev/null || true
+    ip rule add from "$IP" table "$TABLE"
+
+    # Random port
+    local PORT
+    while true; do
+        PORT=$(shuf -i 10000-60000 -n 1)
+        if ! ss -tlnH "sport = :$PORT" | grep -q .; then
+            break
+        fi
+    done
+
+    # 3proxy config
+    cat > "$RUNTIME_CFG" << EOF
+# 3proxy runtime config for ppp${ID}
+# IP: ${IP} Port: ${PORT}
+
+nserver 8.8.8.8
+nserver 8.8.4.4
+
+log ${LOG_DIR}/3proxy_ppp${ID}.log D
+logformat "L%t %N:%p %E %C:%c %R:%r %O %I %h %T"
+
+timeouts 1 5 30 60 180 1800 15 60
+
+auth none
+allow *
+
+external ${IP}
+proxy -p${PORT} -i0.0.0.0 -e${IP}
+EOF
+
+    3proxy "$RUNTIME_CFG" &
+
+    # Cập nhật proxies.txt
+    sed -i "${LINE_NUM}s/.*/${IP}:${PORT}/" "$PROXIES_FILE"
+
+    echo "$PORT"
 }
 
 # ========== BẮT ĐẦU ==========
@@ -102,41 +157,43 @@ else
     echo "   ⚠️  Session đã chết, khởi tạo lại..."
 fi
 
-# ========== BƯỚC 1: HUỶ HOÀN TOÀN ==========
-echo "   Huỷ session..."
-kill_pppoe
-echo "   Session đã huỷ."
+# Kill proxy cũ
+kill_proxy
 
-# ========== BƯỚC 2: KẾT NỐI LẠI ==========
-NEW_IP=$(start_pppoe)
+# ========== BƯỚC 1: DISCONNECT + RECONNECT (giữ macvlan) ==========
+echo "   Disconnect pppd..."
+kill_pppd_only
+sleep 2
+
+echo "   Reconnect..."
+NEW_IP=$(connect_pppoe)
 
 if [ -z "$NEW_IP" ]; then
-    echo "❌ $IFACE không nhận được IP (timeout 20s)"
+    echo "   ⚠️  Không nhận được IP, thử tạo lại macvlan..."
+    rebuild_macvlan
+    NEW_IP=$(connect_pppoe)
+fi
+
+if [ -z "$NEW_IP" ]; then
+    echo "❌ $IFACE không nhận được IP"
     exit 1
 fi
 
-# ========== BƯỚC 2b: NẾU IP KHÔNG ĐỔI → CHỜ LÂU HƠN ==========
-if [ -n "$OLD_IP" ] && [ "$NEW_IP" = "$OLD_IP" ]; then
-    echo "   ⚠️  Vẫn IP cũ ($NEW_IP)"
-    echo "   Huỷ lại, chờ 30s cho ISP release binding..."
-    kill_pppoe
-
-    for i in $(seq 30 -1 1); do
-        printf "\r   ⏳ Chờ ISP: %2ds " "$i"
-        sleep 1
-    done
-    echo ""
-
-    NEW_IP=$(start_pppoe)
+# ========== BƯỚC 2: NẾU TRÙNG IP → HUỶ MACVLAN, TẠO LẠI ==========
+if [ -n "$OLD_IP" ] && [ "$NEW_IP" = "$OLD_IP" ] && [ "$FAST_MODE" = false ]; then
+    echo "   ⚠️  Vẫn IP cũ ($NEW_IP), huỷ macvlan tạo lại..."
+    kill_pppd_only
+    rebuild_macvlan
+    
+    NEW_IP=$(connect_pppoe)
     if [ -z "$NEW_IP" ]; then
-        echo "❌ $IFACE không nhận được IP lần 2"
+        echo "❌ $IFACE không nhận được IP sau khi tạo lại macvlan"
         exit 1
     fi
 fi
 
-echo "   IP mới: $NEW_IP"
-
 # ========== BƯỚC 3: CẤU HÌNH PROXY ==========
+echo "   IP mới: $NEW_IP"
 
 # Policy routing
 TABLE=$((100 + ID))
@@ -183,5 +240,5 @@ if [ -n "$OLD_IP" ] && [ "$NEW_IP" != "$OLD_IP" ]; then
 elif [ -z "$OLD_IP" ]; then
     echo "✅ Khôi phục session: $NEW_IP (port $PORT)"
 else
-    echo "⚠️  IP không đổi sau 30s chờ: $NEW_IP (port $PORT)"
+    echo "⚠️  IP không đổi: $NEW_IP (port $PORT)"
 fi
