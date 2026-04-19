@@ -8,6 +8,7 @@ let currentFilter = 'all';
 let sessionsData = [];
 let busyActions = new Map(); // Track buttons in loading state: key -> timestamp
 const BUSY_TIMEOUT_MS = 60000; // Auto-clear loading after 60 seconds
+let checkResults = new Map(); // Track TCP check results: id -> {ok, latency, error, time}
 
 function setBusy(key) {
     busyActions.set(key, Date.now());
@@ -325,6 +326,7 @@ function renderSessionCard(s) {
                     Xoay IP
                 </button>
             `}
+            ${s.status !== 'stopped' ? renderCheckButton(s.id) : ''}
         </div>
     </div>`;
 }
@@ -478,6 +480,76 @@ async function rotateSession(id) {
     }
 }
 
+// ============ TCP CHECK ============
+
+function renderCheckButton(id) {
+    var cr = checkResults.get(id);
+    var checking = isBusy('check-' + id);
+    if (checking) {
+        return '<button class="session-btn check loading" disabled title="Đang kiểm tra..."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>';
+    }
+    if (cr) {
+        var cls = cr.ok ? 'ok' : 'fail';
+        var icon = cr.ok ? '✓' : '✗';
+        var title = cr.ok ? 'OK - ' + cr.latency + 'ms' : 'FAIL: ' + (cr.error || 'timeout');
+        return '<button class="session-btn check ' + cls + '" onclick="checkSession(' + id + ')" title="' + title + '">' + icon + (cr.ok ? ' ' + cr.latency + 'ms' : '') + '</button>';
+    }
+    return '<button class="session-btn check" onclick="checkSession(' + id + ')" title="Check TCP"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>';
+}
+
+async function checkSession(id) {
+    setBusy('check-' + id);
+    // Re-render just this card
+    var card = document.querySelector('[data-session-id="' + id + '"]');
+    if (card) {
+        var s = sessionsData.find(function(x) { return x.id === id; });
+        if (s) {
+            var temp = document.createElement('div');
+            temp.innerHTML = renderSessionCard(s);
+            card.replaceWith(temp.firstElementChild);
+        }
+    }
+    try {
+        var res = await fetch('/api/session/' + id + '/check');
+        var data = await res.json();
+        checkResults.set(id, { ok: data.ok, latency: data.latency, error: data.error, time: Date.now() });
+    } catch (e) {
+        checkResults.set(id, { ok: false, latency: 0, error: e.message, time: Date.now() });
+    }
+    clearBusy('check-' + id);
+    // Re-render card
+    var card2 = document.querySelector('[data-session-id="' + id + '"]');
+    if (card2) {
+        var s2 = sessionsData.find(function(x) { return x.id === id; });
+        if (s2) {
+            var temp2 = document.createElement('div');
+            temp2.innerHTML = renderSessionCard(s2);
+            card2.replaceWith(temp2.firstElementChild);
+        }
+    }
+}
+
+async function checkAll() {
+    var btn = document.getElementById('btnCheckAll');
+    btn.classList.add('loading');
+    checkResults.clear();
+    renderSessions(sessionsData);
+    showToast('🔍 Đang kiểm tra kết nối tất cả proxy...', 'info');
+    try {
+        var res = await fetch('/api/check-all');
+        var data = await res.json();
+        // Results will be applied via socket events, but also handle here as fallback
+        data.results.forEach(function(r) {
+            checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+        });
+        renderSessions(sessionsData);
+        showToast('✅ Check hoàn tất: ' + data.passed + '/' + data.total + ' OK', data.passed === data.total ? 'success' : 'warning');
+    } catch (e) {
+        showToast('❌ Lỗi check: ' + e.message, 'error');
+    }
+    btn.classList.remove('loading');
+}
+
 // ============ SOCKET.IO EVENTS ============
 
 socket.on('install_log', (data) => {
@@ -555,6 +627,26 @@ socket.on('status_update', (data) => {
     sessionsData = data.sessions;
     renderSessions(data.sessions);
     updateStats(data.stats);
+});
+
+socket.on('check_progress', (data) => {
+    data.results.forEach(function(r) {
+        checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+        // Update individual card
+        var card = document.querySelector('[data-session-id="' + r.id + '"]');
+        if (card) {
+            var s = sessionsData.find(function(x) { return x.id === r.id; });
+            if (s) {
+                var temp = document.createElement('div');
+                temp.innerHTML = renderSessionCard(s);
+                card.replaceWith(temp.firstElementChild);
+            }
+        }
+    });
+});
+
+socket.on('check_complete', (data) => {
+    appendTerminal('\n[TCP Check] ' + data.passed + '/' + data.total + ' proxies OK\n', data.passed === data.total ? 'success' : 'warn');
 });
 
 socket.on('refresh', () => {
