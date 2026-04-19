@@ -1,9 +1,9 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { readConfig, writeConfig, BASE_DIR, PROXY_DIR } = require('./config');
+const { readConfig, writeConfig, BASE_DIR, PROXY_DIR, PROXIES_FILE } = require('./config');
 const { getNetworkInterfaces, getPPPoEStatus, getSystemStats } = require('./status');
-const { connectPppoe, setupProxy, killProxy, killPppd, rebuildMacvlan, getSessionIP, getProxyPort, sleep } = require('./pppoe');
+const { connectPppoe, setupProxy, killProxy, killPppd, rebuildMacvlan, getSessionIP, getProxyPort, sleep, shellExec } = require('./pppoe');
 
 // Emit real-time session state to the UI
 function emitSessionState(io, id, updates) {
@@ -52,8 +52,9 @@ function registerRoutes(app, io) {
         res.json(getSystemStats());
     });
 
-    // ============ BULK ACTIONS (shell scripts) ============
+    // ============ BULK ACTIONS ============
 
+    // Install still uses shell script (system-level setup: macvlan, peer files, credentials)
     app.post('/api/install', function(req, res) {
         res.json({ success: true, message: 'Installing...' });
         var child = spawn('bash', [path.join(BASE_DIR, 'install.sh')], {
@@ -75,46 +76,162 @@ function registerRoutes(app, io) {
         });
     });
 
-    app.post('/api/start-all', function(req, res) {
-        res.json({ success: true, message: 'Starting all sessions...' });
-        var child = spawn('bash', [path.join(BASE_DIR, 'start_all.sh')], {
-            cwd: BASE_DIR,
-            env: Object.assign({}, process.env, { PATH: process.env.PATH })
-        });
-        var output = '';
-        child.stdout.on('data', function(data) {
-            output += data.toString();
-            io.emit('start_log', data.toString());
-        });
-        child.stderr.on('data', function(data) {
-            output += data.toString();
-            io.emit('start_log', data.toString());
-        });
-        child.on('close', function(code) {
-            io.emit('start_complete', { code: code, output: output });
-            io.emit('refresh');
-        });
-    });
+    // ============ STOP ALL (native) ============
 
     app.post('/api/stop-all', function(req, res) {
         res.json({ success: true, message: 'Stopping all sessions...' });
-        var child = spawn('bash', [path.join(BASE_DIR, 'stop_all.sh')], {
-            cwd: BASE_DIR,
-            env: Object.assign({}, process.env, { PATH: process.env.PATH })
-        });
-        var output = '';
-        child.stdout.on('data', function(data) {
-            output += data.toString();
-            io.emit('stop_log', data.toString());
-        });
-        child.stderr.on('data', function(data) {
-            output += data.toString();
-            io.emit('stop_log', data.toString());
-        });
-        child.on('close', function(code) {
-            io.emit('stop_complete', { code: code, output: output });
-            io.emit('refresh');
-        });
+
+        (async function() {
+            try {
+                var config = readConfig();
+                var numAccounts = config.pppoe ? config.pppoe.length : 0;
+                var totalSessions = numAccounts * 30;
+
+                io.emit('stop_log', '[*] Stopping 3proxy...\n');
+
+                // Kill all 3proxy processes
+                await shellExec('pkill -f "3proxy.*3proxy_ppp" 2>/dev/null');
+                await shellExec('pkill 3proxy 2>/dev/null');
+                // Kill legacy processes
+                await shellExec('pkill -f log_proxy.py 2>/dev/null');
+                await shellExec('pkill tinyproxy 2>/dev/null');
+
+                io.emit('stop_log', '[*] Stopping pppd...\n');
+
+                // Kill all pppd processes
+                await shellExec('pkill pppd 2>/dev/null');
+                await sleep(2000);
+
+                // Remove runtime configs
+                await shellExec('rm -f ' + PROXY_DIR + '/3proxy_ppp*_active.cfg 2>/dev/null');
+
+                // Force kill remaining
+                var pppdLeft = await shellExec('pgrep -c pppd 2>/dev/null || echo 0');
+                var proxyLeft = await shellExec('pgrep -c 3proxy 2>/dev/null || echo 0');
+
+                if (parseInt(pppdLeft) > 0 || parseInt(proxyLeft) > 0) {
+                    io.emit('stop_log', '[*] Force killing...\n');
+                    await shellExec('pkill -9 pppd 2>/dev/null');
+                    await shellExec('pkill -9 3proxy 2>/dev/null');
+                    await shellExec('pkill -9 -f log_proxy.py 2>/dev/null');
+                    await sleep(1000);
+                }
+
+                // Update all session cards to stopped
+                for (var i = 0; i < totalSessions; i++) {
+                    emitSessionState(io, i, { status: 'stopped', step: 'done', message: '' });
+                }
+
+                var finalPppd = await shellExec('pgrep -c pppd 2>/dev/null || echo 0');
+                var finalProxy = await shellExec('pgrep -c 3proxy 2>/dev/null || echo 0');
+                io.emit('stop_log', '[✓] All stopped (pppd: ' + finalPppd + ', 3proxy: ' + finalProxy + ')\n');
+
+                io.emit('stop_complete', { code: 0, output: 'All stopped' });
+                io.emit('refresh');
+            } catch (err) {
+                io.emit('stop_log', '❌ Lỗi: ' + err.message + '\n');
+                io.emit('stop_complete', { code: 1, output: 'ERROR: ' + err.message });
+            }
+        })();
+    });
+
+    // ============ START ALL (native) ============
+
+    app.post('/api/start-all', function(req, res) {
+        res.json({ success: true, message: 'Starting all sessions...' });
+
+        (async function() {
+            try {
+                var config = readConfig();
+                var numAccounts = config.pppoe ? config.pppoe.length : 0;
+                var totalSessions = numAccounts * 30;
+
+                io.emit('start_log', '============================================\n');
+                io.emit('start_log', '  START - ' + totalSessions + ' PPPoE + 3proxy\n');
+                io.emit('start_log', '============================================\n\n');
+
+                // --- Cleanup ---
+                io.emit('start_log', '[*] Dừng các phiên cũ...\n');
+                await shellExec('pkill -f "3proxy.*3proxy_ppp" 2>/dev/null');
+                await shellExec('pkill -f log_proxy.py 2>/dev/null');
+                await shellExec('pkill tinyproxy 2>/dev/null');
+                await shellExec('pkill pppd 2>/dev/null');
+                await sleep(3000);
+
+                // Clean ip rules
+                for (var t = 100; t < 100 + totalSessions; t++) {
+                    await shellExec('ip route flush table ' + t + ' 2>/dev/null');
+                }
+                var rules = await shellExec("ip rule show | grep -oP 'from \\S+ lookup \\d+'");
+                if (rules) {
+                    var ruleLines = rules.split('\n').filter(Boolean);
+                    for (var r = 0; r < ruleLines.length; r++) {
+                        await shellExec('ip rule del ' + ruleLines[r] + ' 2>/dev/null');
+                    }
+                }
+
+                // Reset proxies file
+                fs.writeFileSync(PROXIES_FILE, '');
+
+                // Mark all sessions as stopped initially
+                for (var s = 0; s < totalSessions; s++) {
+                    emitSessionState(io, s, { status: 'stopped', step: '', message: '' });
+                }
+
+                // --- Start PPPoE sequentially ---
+                io.emit('start_log', '[*] Khởi động PPPoE tuần tự...\n\n');
+
+                var connected = 0;
+                var proxyLines = [];
+
+                for (var i = 0; i < totalSessions; i++) {
+                    var iface = 'ppp' + i;
+
+                    emitSessionState(io, i, { status: 'connecting', step: 'starting', message: 'Đang kết nối...' });
+
+                    var ip = await connectPppoe(i);
+
+                    if (ip) {
+                        emitSessionState(io, i, { ip: ip, status: 'connected', step: 'proxy', message: 'Đang cấu hình proxy...' });
+
+                        var port = await setupProxy(i, ip);
+
+                        emitSessionState(io, i, { ip: ip, port: String(port), status: 'connected', proxyStatus: 'running', step: 'done', message: '' });
+                        io.emit('start_log', '  ✅ ' + iface + '  ' + ip + ' → :' + port + '\n');
+
+                        proxyLines.push(ip + ':' + port);
+                        connected++;
+                    } else {
+                        emitSessionState(io, i, { status: 'stopped', step: 'failed', message: 'Không nhận được IP' });
+                        io.emit('start_log', '  ❌ ' + iface + '  no IP (timeout)\n');
+                        proxyLines.push('');
+                    }
+
+                    // Delay between sessions
+                    if (i < totalSessions - 1) {
+                        await sleep(2000);
+                    }
+                }
+
+                // Write final proxies.txt
+                fs.writeFileSync(PROXIES_FILE, proxyLines.join('\n') + '\n');
+
+                await sleep(1000);
+
+                // Summary
+                var proxyCount = await shellExec('pgrep -c 3proxy 2>/dev/null || echo 0');
+                io.emit('start_log', '\n============================================\n');
+                io.emit('start_log', '  PPPoE connected: ' + connected + '/' + totalSessions + '\n');
+                io.emit('start_log', '  3proxy running:  ' + proxyCount + '\n');
+                io.emit('start_log', '============================================\n');
+
+                io.emit('start_complete', { code: 0, output: connected + '/' + totalSessions + ' connected' });
+                io.emit('refresh');
+            } catch (err) {
+                io.emit('start_log', '❌ Lỗi: ' + err.message + '\n');
+                io.emit('start_complete', { code: 1, output: 'ERROR: ' + err.message });
+            }
+        })();
     });
 
     // ============ SINGLE SESSION: START ============
