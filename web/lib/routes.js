@@ -1,8 +1,8 @@
 const path = require('path');
 const fs = require('fs');
-const { readConfig, writeConfig, BASE_DIR, PROXY_DIR, PROXIES_FILE, LOG_DIR, INTERFACE } = require('./config');
+const { readConfig, writeConfig, BASE_DIR, PROXY_DIR, PROXIES_FILE, IP_FILE, BLACKLIST_FILE, LOG_DIR, INTERFACE } = require('./config');
 const { getNetworkInterfaces, getPPPoEStatus, getSystemStats } = require('./status');
-const { connectPppoe, setupProxy, killProxy, killPppd, rebuildMacvlan, getSessionIP, getProxyPort, sleep, shellExec } = require('./pppoe');
+const { connectPppoe, setupProxy, killProxy, killPppd, rebuildMacvlan, getSessionIP, getProxyPort, getProxyPorts, sleep, shellExec } = require('./pppoe');
 
 // Emit real-time session state to the UI
 function emitSessionState(io, id, updates) {
@@ -11,7 +11,8 @@ function emitSessionState(io, id, updates) {
         id: id,
         iface: iface,
         ip: updates.ip || '',
-        port: updates.port || '',
+        vipPort: updates.vipPort || '',
+        ports: updates.ports || [],
         status: updates.status || 'stopped',
         proxyStatus: updates.proxyStatus || 'stopped',
         step: updates.step || '',
@@ -308,12 +309,15 @@ function registerRoutes(app, io) {
                     if (ip) {
                         emitSessionState(io, i, { ip: ip, status: 'connected', step: 'proxy', message: 'Đang cấu hình proxy...' });
 
-                        var port = await setupProxy(i, ip);
+                        var result = await setupProxy(i, ip);
 
-                        emitSessionState(io, i, { ip: ip, port: String(port), status: 'connected', proxyStatus: 'running', step: 'done', message: '' });
-                        io.emit('start_log', '  ✅ ' + iface + '  ' + ip + ' → :' + port + '\n');
+                        // Register IP
+                try { fs.appendFileSync(IP_FILE, ip + '|' + Date.now() + '\n'); } catch(e) {}
 
-                        proxyLines.push(ip + ':' + port);
+                        emitSessionState(io, i, { ip: ip, vipPort: String(result.vipPort), ports: result.ports.map(String), status: 'connected', proxyStatus: 'running', step: 'done', message: '' });
+                        io.emit('start_log', '  ✅ ' + iface + '  ' + ip + ' → VIP:' + result.vipPort + ' (+' + (result.ports.length - 1) + ' ports)\n');
+
+                        proxyLines.push(ip + ':' + result.ports.join(','));
                         connected++;
                     } else {
                         emitSessionState(io, i, { status: 'stopped', step: 'failed', message: 'Không nhận được IP' });
@@ -371,11 +375,14 @@ function registerRoutes(app, io) {
                 emitSessionState(io, id, { ip: ip, status: 'connected', step: 'proxy', message: 'Đang cấu hình proxy...' });
                 io.emit('rotate_log', { id: id, data: '   IP: ' + ip + '\n' });
 
-                var port = await setupProxy(id, ip);
+                var result = await setupProxy(id, ip);
 
-                emitSessionState(io, id, { ip: ip, port: String(port), status: 'connected', proxyStatus: 'running', step: 'done', message: 'Hoàn tất' });
-                io.emit('rotate_log', { id: id, data: '✅ ' + iface + ' → ' + ip + ':' + port + '\n' });
-                io.emit('session_update', { id: id, output: 'OK ' + ip + ':' + port, code: 0 });
+                // Register IP in IP.txt
+                try { fs.appendFileSync(IP_FILE, ip + '|' + Date.now() + '\n'); } catch(e) {}
+
+                emitSessionState(io, id, { ip: ip, vipPort: String(result.vipPort), ports: result.ports.map(String), status: 'connected', proxyStatus: 'running', step: 'done', message: 'Hoàn tất' });
+                io.emit('rotate_log', { id: id, data: '✅ ' + iface + ' → ' + ip + ' VIP:' + result.vipPort + '\n' });
+                io.emit('session_update', { id: id, output: 'OK ' + ip + ':' + result.vipPort, code: 0 });
             } catch (err) {
                 io.emit('rotate_log', { id: id, data: '❌ Lỗi: ' + err.message + '\n' });
                 io.emit('session_update', { id: id, output: 'ERROR: ' + err.message, code: 1 });
@@ -411,99 +418,113 @@ function registerRoutes(app, io) {
         })();
     });
 
-    // ============ SINGLE SESSION: ROTATE ============
+    // ============ SINGLE SESSION: ROTATE (via rotation queue) ============
+
+    var rotationQueue = require('./rotation');
 
     app.post('/api/session/:id/rotate', function(req, res) {
         var id = parseInt(req.params.id);
-        res.json({ success: true, message: 'Rotating ppp' + id + '...' });
+        var entry = rotationQueue.addRequest(id);
+        res.json({ success: true, message: 'Rotating ppp' + id + '...', queueEntry: entry });
 
-        (async function() {
-            var iface = 'ppp' + id;
-            try {
-                // Get old IP
-                var oldIp = await getSessionIP(iface);
-                var oldPort = getProxyPort(id);
-
-                io.emit('rotate_log', { id: id, data: '🔄 Xoay IP cho ' + iface + '\n' });
-                if (oldIp) {
-                    io.emit('rotate_log', { id: id, data: '   IP cũ: ' + oldIp + ' (port ' + oldPort + ')\n' });
-                } else {
-                    io.emit('rotate_log', { id: id, data: '   ⚠️ Session đã chết, khởi tạo lại...\n' });
-                }
-                emitSessionState(io, id, { ip: oldIp, port: oldPort, status: 'rotating', step: 'kill_proxy', message: 'Đang dừng proxy...' });
-
-                // Kill old proxy
-                await killProxy(id);
-
-                // Step 1: Disconnect pppd (keep macvlan)
-                emitSessionState(io, id, { ip: '', port: '', status: 'rotating', step: 'disconnect', message: 'Đang ngắt kết nối...' });
-                io.emit('rotate_log', { id: id, data: '   Disconnect pppd...\n' });
-                await killPppd(id);
-                await sleep(2000);
-
-                // Step 2: Reconnect
-                emitSessionState(io, id, { ip: '', port: '', status: 'rotating', step: 'reconnect', message: 'Đang kết nối lại...' });
-                io.emit('rotate_log', { id: id, data: '   Reconnect...\n' });
-                var newIp = await connectPppoe(id);
-
-                // If no IP, try rebuilding macvlan
-                if (!newIp) {
-                    emitSessionState(io, id, { status: 'rotating', step: 'rebuild_macvlan', message: 'Tạo lại macvlan...' });
-                    io.emit('rotate_log', { id: id, data: '   ⚠️ Không nhận được IP, thử tạo lại macvlan...\n' });
-                    var mac = await rebuildMacvlan(id);
-                    if (mac) io.emit('rotate_log', { id: id, data: '   Tạo lại macvlan (MAC: ' + mac + ')\n' });
-                    newIp = await connectPppoe(id);
-                }
-
-                if (!newIp) {
-                    emitSessionState(io, id, { status: 'stopped', step: 'failed', message: 'Không nhận được IP' });
-                    io.emit('rotate_log', { id: id, data: '❌ ' + iface + ' không nhận được IP\n' });
-                    io.emit('session_update', { id: id, output: 'FAIL no IP', code: 1 });
-                    return;
-                }
-
-                // Step 3: If same IP, rebuild macvlan and retry
-                if (oldIp && newIp === oldIp) {
-                    emitSessionState(io, id, { ip: newIp, status: 'rotating', step: 'same_ip_rebuild', message: 'IP trùng, tạo lại macvlan...' });
-                    io.emit('rotate_log', { id: id, data: '   ⚠️ Vẫn IP cũ (' + newIp + '), huỷ macvlan tạo lại...\n' });
-                    await killPppd(id);
-                    var mac2 = await rebuildMacvlan(id);
-                    if (mac2) io.emit('rotate_log', { id: id, data: '   Tạo lại macvlan (MAC: ' + mac2 + ')\n' });
-
-                    emitSessionState(io, id, { ip: '', status: 'rotating', step: 'reconnect2', message: 'Đang kết nối lại (lần 2)...' });
-                    newIp = await connectPppoe(id);
-                    if (!newIp) {
-                        emitSessionState(io, id, { status: 'stopped', step: 'failed', message: 'Không nhận được IP sau khi tạo lại macvlan' });
-                        io.emit('rotate_log', { id: id, data: '❌ ' + iface + ' không nhận được IP sau khi tạo lại macvlan\n' });
-                        io.emit('session_update', { id: id, output: 'FAIL no IP after macvlan rebuild', code: 1 });
-                        return;
-                    }
-                }
-
-                // Step 4: Setup proxy
-                emitSessionState(io, id, { ip: newIp, status: 'connected', step: 'proxy', message: 'Đang cấu hình proxy...' });
-                io.emit('rotate_log', { id: id, data: '   IP mới: ' + newIp + '\n' });
-                var newPort = await setupProxy(id, newIp);
-
-                // Done!
-                emitSessionState(io, id, { ip: newIp, port: String(newPort), status: 'connected', proxyStatus: 'running', step: 'done', message: 'Hoàn tất' });
-
-                if (oldIp && newIp !== oldIp) {
-                    io.emit('rotate_log', { id: id, data: '✅ Đổi IP thành công: ' + oldIp + ' → ' + newIp + ' (port ' + newPort + ')\n' });
-                } else if (!oldIp) {
-                    io.emit('rotate_log', { id: id, data: '✅ Khôi phục session: ' + newIp + ' (port ' + newPort + ')\n' });
-                } else {
-                    io.emit('rotate_log', { id: id, data: '⚠️ IP không đổi: ' + newIp + ' (port ' + newPort + ')\n' });
-                }
-
-                io.emit('session_update', { id: id, output: 'OK ' + newIp + ':' + newPort, code: 0 });
-            } catch (err) {
-                emitSessionState(io, id, { status: 'stopped', step: 'error', message: 'Lỗi: ' + err.message });
-                io.emit('rotate_log', { id: id, data: '❌ Lỗi: ' + err.message + '\n' });
-                io.emit('session_update', { id: id, output: 'ERROR: ' + err.message, code: 1 });
-            }
-        })();
+        // Start execution
+        rotationQueue.executeRotation(id);
     });
+
+    // ============ ROTATION QUEUE API ============
+
+    app.get('/api/rotation-queue', function(req, res) {
+        res.json(rotationQueue.getAll());
+    });
+
+    app.delete('/api/rotation-queue/:id', function(req, res) {
+        var id = parseInt(req.params.id);
+        rotationQueue.removeRequest(id);
+        res.json({ success: true });
+    });
+
+    app.delete('/api/rotation-queue', function(req, res) {
+        rotationQueue.clearAll();
+        res.json({ success: true });
+    });
+
+    // ============ BLACKLIST API ============
+
+    function loadBlacklist() {
+        try {
+            return fs.readFileSync(BLACKLIST_FILE, 'utf8').split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    app.get('/api/blacklist', function(req, res) {
+        res.json(loadBlacklist());
+    });
+
+    app.post('/api/blacklist', function(req, res) {
+        var domains = req.body.domains;
+        if (!domains || !Array.isArray(domains)) {
+            return res.status(400).json({ error: 'domains array required' });
+        }
+        // Clean and deduplicate
+        var clean = domains.map(function(d) { return d.trim().toLowerCase(); }).filter(Boolean);
+        var existing = loadBlacklist();
+        var merged = existing.slice();
+        for (var i = 0; i < clean.length; i++) {
+            if (merged.indexOf(clean[i]) === -1) {
+                merged.push(clean[i]);
+            }
+        }
+        fs.writeFileSync(BLACKLIST_FILE, merged.join('\n') + '\n');
+        res.json({ success: true, count: merged.length, domains: merged });
+
+        // Auto-reload all proxies
+        reloadAllBlacklist(io);
+    });
+
+    app.delete('/api/blacklist', function(req, res) {
+        var domains = req.body.domains;
+        if (domains && Array.isArray(domains)) {
+            // Remove specific domains
+            var existing = loadBlacklist();
+            var toRemove = domains.map(function(d) { return d.trim().toLowerCase(); });
+            var filtered = existing.filter(function(d) { return toRemove.indexOf(d) === -1; });
+            fs.writeFileSync(BLACKLIST_FILE, filtered.join('\n') + (filtered.length ? '\n' : ''));
+            res.json({ success: true, count: filtered.length, domains: filtered });
+        } else {
+            // Clear all
+            fs.writeFileSync(BLACKLIST_FILE, '');
+            res.json({ success: true, count: 0, domains: [] });
+        }
+
+        // Auto-reload all proxies
+        reloadAllBlacklist(io);
+    });
+
+    // Reload all active 3proxy configs with updated blacklist
+    async function reloadAllBlacklist(io) {
+        var config = readConfig();
+        var totalAccounts = config.pppoe ? config.pppoe.length : 0;
+        var total = totalAccounts * 30;
+
+        io.emit('rotate_log', { id: -1, data: '🔄 Đang cập nhật blacklist cho tất cả proxy...\n' });
+
+        var reloaded = 0;
+        for (var i = 0; i < total; i++) {
+            var iface = 'ppp' + i;
+            var ip = await getSessionIP(iface);
+            if (ip) {
+                try {
+                    await killProxy(i);
+                    await setupProxy(i, ip);
+                    reloaded++;
+                } catch (e) { /* skip failed */ }
+            }
+        }
+
+        io.emit('rotate_log', { id: -1, data: '✅ Đã cập nhật blacklist cho ' + reloaded + ' proxy\n' });
+    }
 }
 
 module.exports = registerRoutes;

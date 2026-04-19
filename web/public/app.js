@@ -42,7 +42,13 @@ document.addEventListener('DOMContentLoaded', () => {
     loadConfig();
     loadInterfaces();
     refreshStatus();
+    loadRotationQueue();
+    loadBlacklistUI();
     setupTabs();
+
+    // Enter key on blacklist input
+    var blInput = document.getElementById('blacklistInput');
+    if (blInput) blInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') addBlacklistDomain(); });
 });
 
 // ============ TAB NAVIGATION ============
@@ -242,10 +248,40 @@ function getStatusClass(status) {
     return status;
 }
 
+// Countdown timer - small inline badge
+function renderCountdownBadge(nextRetryAt) {
+    var remaining = Math.max(0, Math.floor((nextRetryAt - Date.now()) / 1000));
+    return '<span class="countdown-badge" data-next-retry="' + nextRetryAt + '">⏱' + remaining + 's</span>';
+}
+
+// Tick countdowns every second
+setInterval(function() {
+    document.querySelectorAll('.countdown-badge[data-next-retry]').forEach(function(el) {
+        var remaining = Math.max(0, Math.floor((parseInt(el.dataset.nextRetry) - Date.now()) / 1000));
+        el.textContent = '⏱' + remaining + 's';
+    });
+}, 1000);
+
 function renderSessionCard(s) {
     const isBusyState = isBusy(`session-${s.id}`) || ['rotating', 'connecting', 'stopping'].includes(s.status);
     const statusClass = getStatusClass(s.status);
     const stepMsg = s.message || '';
+    const ports = s.ports || [];
+    const vipPort = s.vipPort || '';
+    const regularPorts = ports.length > 1 ? ports.slice(1) : [];
+
+    // Build ports display
+    var portsHtml = '';
+    if (vipPort || regularPorts.length > 0) {
+        portsHtml = '<div class="session-ports">';
+        if (vipPort) {
+            portsHtml += '<div class="port-item vip" title="VIP Port"><span class="port-label">★ VIP</span><span class="port-value">' + vipPort + '</span></div>';
+        }
+        for (var pi = 0; pi < regularPorts.length; pi++) {
+            portsHtml += '<div class="port-item" title="Port ' + (pi + 1) + '"><span class="port-label">P' + (pi + 1) + '</span><span class="port-value">' + regularPorts[pi] + '</span></div>';
+        }
+        portsHtml += '</div>';
+    }
 
     return `
     <div class="session-card ${statusClass}" data-session-id="${s.id}" data-status="${s.status}">
@@ -254,6 +290,7 @@ function renderSessionCard(s) {
                 <span class="session-num">${s.iface}</span>
                 <span class="session-badge ${statusClass}">${getStatusBadge(s.status)}</span>
             </div>
+            ${s.nextRetryAt && s.step === 'waiting' ? renderCountdownBadge(s.nextRetryAt) : ''}
         </div>
         ${stepMsg ? `<div class="session-step">${escapeHtml(stepMsg)}</div>` : ''}
         <div class="session-info">
@@ -262,18 +299,11 @@ function renderSessionCard(s) {
                 <span class="session-value ${s.ip ? 'ip' : 'no-ip'}">${s.ip || '---'}</span>
             </div>
             <div class="session-field">
-                <span class="session-label">Proxy Port</span>
-                <span class="session-value">${s.port || '---'}</span>
-            </div>
-            <div class="session-field">
                 <span class="session-label">Account</span>
                 <span class="session-value" style="font-size:10px">${escapeHtml(truncate(s.username || '', 22))}</span>
             </div>
-            <div class="session-field">
-                <span class="session-label">Proxy</span>
-                <span class="session-value ${s.proxyStatus === 'running' ? 'ip' : 'no-ip'}">${s.proxyStatus || 'stopped'}</span>
-            </div>
         </div>
+        ${portsHtml}
         <div class="session-actions">
             ${s.status === 'stopped' ? `
                 <button class="session-btn start" onclick="startSession(${s.id})">
@@ -326,11 +356,15 @@ function updateSingleSession(data) {
     var idx = sessionsData.findIndex(s => s.id === data.id);
     if (idx !== -1) {
         if (data.ip !== undefined) sessionsData[idx].ip = data.ip;
-        if (data.port !== undefined) sessionsData[idx].port = data.port;
+        if (data.vipPort !== undefined) sessionsData[idx].vipPort = data.vipPort;
+        if (data.ports !== undefined) sessionsData[idx].ports = data.ports;
         if (data.status) sessionsData[idx].status = data.status;
         if (data.proxyStatus) sessionsData[idx].proxyStatus = data.proxyStatus;
         sessionsData[idx].message = data.message || '';
         sessionsData[idx].step = data.step || '';
+        if (data.nextRetryAt !== undefined) sessionsData[idx].nextRetryAt = data.nextRetryAt;
+        // Clear nextRetryAt when step is no longer waiting
+        if (data.step && data.step !== 'waiting') sessionsData[idx].nextRetryAt = null;
     }
 
     // Find the card in the DOM and update it
@@ -526,6 +560,181 @@ socket.on('status_update', (data) => {
 socket.on('refresh', () => {
     setTimeout(refreshStatus, 1000);
 });
+
+// ============ ROTATION QUEUE ============
+
+socket.on('rotation_queue_update', (data) => {
+    renderRotationQueue(data);
+});
+
+function renderRotationQueue(entries) {
+    var section = document.getElementById('rotationQueueSection');
+    var tbody = document.getElementById('rotationQueueBody');
+    var countEl = document.getElementById('queueCount');
+
+    if (!entries || entries.length === 0) {
+        section.style.display = 'none';
+        countEl.textContent = '0';
+        return;
+    }
+
+    section.style.display = '';
+    countEl.textContent = entries.length;
+
+    tbody.innerHTML = entries.map(function(e) {
+        var statusClass = 'queue-status-' + e.status.replace('_', '-');
+        var statusText = {
+            'queued': '⏳ Đang chờ',
+            'in_progress': '🔄 Đang xoay',
+            'pending_retry': '⏱ Chờ thử lại',
+            'success': '✅ Thành công',
+            'failed': '❌ Thất bại'
+        }[e.status] || e.status;
+
+        var elapsed = '';
+        if (e.requestedAt) {
+            var secs = Math.floor((Date.now() - e.requestedAt) / 1000);
+            if (secs < 60) elapsed = secs + 's';
+            else elapsed = Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+        }
+
+        var nextRetry = '';
+        if (e.status === 'pending_retry' && e.nextRetryAt) {
+            var remaining = Math.max(0, Math.floor((e.nextRetryAt - Date.now()) / 1000));
+            nextRetry = ' (' + remaining + 's)';
+        }
+
+        return '<tr class="' + statusClass + '">' +
+            '<td><strong>' + e.iface + '</strong></td>' +
+            '<td class="mono">' + (e.oldIp || '---') + '</td>' +
+            '<td class="mono">' + (e.newIp || '---') + '</td>' +
+            '<td><span class="queue-badge ' + statusClass + '">' + statusText + nextRetry + '</span></td>' +
+            '<td>' + e.attempts + '</td>' +
+            '<td>' + elapsed + '</td>' +
+            '<td><button class="btn btn-sm btn-ghost" onclick="removeFromQueue(' + e.id + ')" title="Huỷ">✕</button></td>' +
+            '</tr>';
+    }).join('');
+}
+
+async function removeFromQueue(id) {
+    try {
+        await fetch('/api/rotation-queue/' + id, { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+}
+
+async function clearRotationQueue() {
+    try {
+        await fetch('/api/rotation-queue', { method: 'DELETE' });
+    } catch (e) { /* ignore */ }
+}
+
+// Refresh queue on page load
+async function loadRotationQueue() {
+    try {
+        var res = await fetch('/api/rotation-queue');
+        var data = await res.json();
+        renderRotationQueue(data);
+    } catch (e) { /* ignore */ }
+}
+
+// Auto-refresh countdown timers in queue table
+setInterval(function() {
+    var tbody = document.getElementById('rotationQueueBody');
+    if (tbody && tbody.children.length > 0) {
+        // Re-fetch to update countdown
+        loadRotationQueue();
+    }
+}, 5000);
+
+// ============ BLACKLIST ============
+
+async function loadBlacklistUI() {
+    try {
+        var res = await fetch('/api/blacklist');
+        var domains = await res.json();
+        renderBlacklist(domains);
+    } catch (e) { /* ignore */ }
+}
+
+function renderBlacklist(domains) {
+    var list = document.getElementById('blacklistList');
+    var actions = document.getElementById('blacklistActions');
+    var status = document.getElementById('blacklistStatus');
+
+    if (!domains || domains.length === 0) {
+        list.innerHTML = '<div class="blacklist-empty">Chưa có domain nào bị chặn</div>';
+        actions.style.display = 'none';
+        status.textContent = '';
+        return;
+    }
+
+    actions.style.display = '';
+    status.textContent = domains.length + ' domain đang bị chặn';
+
+    list.innerHTML = domains.map(function(d) {
+        return '<div class="blacklist-item">' +
+            '<span class="blacklist-domain">' + escapeHtml(d) + '</span>' +
+            '<button class="blacklist-remove" onclick="removeBlacklistDomain(\'' + escapeHtml(d) + '\')" title="Xóa">✕</button>' +
+            '</div>';
+    }).join('');
+}
+
+async function addBlacklistDomain() {
+    var input = document.getElementById('blacklistInput');
+    var raw = input.value.trim();
+    if (!raw) return;
+
+    // Parse: comma, newline, space separated
+    var domains = raw.split(/[,\n\s]+/).map(function(d) { return d.trim(); }).filter(Boolean);
+    if (domains.length === 0) return;
+
+    input.value = '';
+    document.getElementById('blacklistStatus').textContent = '⏳ Đang thêm...';
+
+    try {
+        var res = await fetch('/api/blacklist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains: domains })
+        });
+        var data = await res.json();
+        renderBlacklist(data.domains);
+        showToast('✅ Đã thêm ' + domains.length + ' domain vào blacklist', 'success');
+    } catch (e) {
+        showToast('❌ Lỗi thêm blacklist', 'error');
+    }
+}
+
+async function removeBlacklistDomain(domain) {
+    try {
+        var res = await fetch('/api/blacklist', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains: [domain] })
+        });
+        var data = await res.json();
+        renderBlacklist(data.domains);
+        showToast('Đã xóa ' + domain, 'success');
+    } catch (e) {
+        showToast('❌ Lỗi xóa', 'error');
+    }
+}
+
+async function clearBlacklist() {
+    if (!confirm('Xóa tất cả domain khỏi blacklist?')) return;
+    try {
+        var res = await fetch('/api/blacklist', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        var data = await res.json();
+        renderBlacklist(data.domains);
+        showToast('✅ Đã xóa tất cả blacklist', 'success');
+    } catch (e) {
+        showToast('❌ Lỗi', 'error');
+    }
+}
 
 // ============ UI HELPERS ============
 

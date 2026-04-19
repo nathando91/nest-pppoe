@@ -4,6 +4,8 @@ const path = require('path');
 const BASE_DIR = '/root/nest';
 const CONFIG_FILE = path.join(BASE_DIR, 'config.json');
 const PROXIES_FILE = path.join(BASE_DIR, 'proxies.txt');
+const IP_FILE = path.join(BASE_DIR, 'IP.txt');
+const BLACKLIST_FILE = path.join(BASE_DIR, 'blacklist.txt');
 const PROXY_DIR = path.join(BASE_DIR, 'proxy');
 const LOG_DIR = path.join(BASE_DIR, 'logs');
 const INTERFACE = 'enp1s0f0';
@@ -24,6 +26,8 @@ module.exports = {
     BASE_DIR,
     CONFIG_FILE,
     PROXIES_FILE,
+    IP_FILE,
+    BLACKLIST_FILE,
     PROXY_DIR,
     LOG_DIR,
     INTERFACE,

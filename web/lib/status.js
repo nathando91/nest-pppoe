@@ -32,6 +32,7 @@ function getPPPoEStatus() {
     const totalSessions = numAccounts * 30;
 
     // Read proxies.txt for port mapping
+    // Format: IP:VIP_PORT,PORT2,PORT3,PORT4,PORT5,PORT6
     let proxyLines = [];
     try {
         proxyLines = fs.readFileSync(PROXIES_FILE, 'utf8').trim().split('\n').filter(Boolean);
@@ -44,7 +45,8 @@ function getPPPoEStatus() {
 
         let ip = '';
         let status = 'stopped';
-        let port = '';
+        let vipPort = '';
+        let ports = [];
         let proxyStatus = 'stopped';
 
         // Check if ppp interface exists and has IP
@@ -55,18 +57,21 @@ function getPPPoEStatus() {
             status = 'stopped';
         }
 
-        // Check proxy from proxies.txt
+        // Parse proxy ports from proxies.txt
         if (proxyLines[i]) {
             const parts = proxyLines[i].split(':');
             if (parts.length >= 2) {
-                port = parts[parts.length - 1];
+                // Format: IP:port1,port2,port3,port4,port5,port6
+                var portStr = parts.slice(1).join(':'); // rejoin in case IP has no extra colons
+                ports = portStr.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+                vipPort = ports[0] || '';
             }
         }
 
-        // Check if 3proxy is running for this session
-        if (port) {
+        // Check if 3proxy is running (check VIP port)
+        if (vipPort) {
             try {
-                const check = execSync('ss -tlnH "sport = :' + port + '" 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
+                const check = execSync('ss -tlnH "sport = :' + vipPort + '" 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
                 if (check) proxyStatus = 'running';
             } catch (err) { /* ignore */ }
         }
@@ -86,7 +91,8 @@ function getPPPoEStatus() {
             iface: iface,
             username: account.username || 'N/A',
             ip: ip,
-            port: port,
+            vipPort: vipPort,
+            ports: ports,
             status: status,
             proxyStatus: proxyStatus,
             macvlan: macvlan,

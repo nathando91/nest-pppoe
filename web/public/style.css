@@ -699,6 +699,20 @@ body {
     50% { opacity: 0.7; }
 }
 
+/* Countdown badge - small pill */
+.countdown-badge {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--amber-400);
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    padding: 2px 7px;
+    border-radius: 8px;
+    white-space: nowrap;
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
 .session-badge.rotating {
     background: rgba(168,85,247,0.12);
     color: var(--purple-400);
@@ -793,6 +807,64 @@ body {
 
 .session-value.no-ip {
     color: var(--text-tertiary);
+}
+
+/* ---- Multi-port grid ---- */
+
+.session-ports {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.port-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 4px 2px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: 5px;
+    transition: all 0.2s;
+}
+
+.port-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.port-item.vip {
+    background: rgba(251, 191, 36, 0.06);
+    border-color: rgba(251, 191, 36, 0.2);
+}
+
+.port-item.vip:hover {
+    background: rgba(251, 191, 36, 0.12);
+}
+
+.port-label {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-tertiary);
+}
+
+.port-item.vip .port-label {
+    color: var(--amber-400);
+}
+
+.port-value {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.port-item.vip .port-value {
+    color: var(--amber-400);
 }
 
 .session-actions {
@@ -1324,4 +1396,201 @@ body {
 
 .console-container .xterm-screen {
     width: 100% !important;
+}
+
+/* ============ ROTATION QUEUE ============ */
+
+.rotation-queue-section {
+    margin-bottom: 24px;
+}
+
+.queue-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(168, 85, 247, 0.15);
+    color: var(--purple-400);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    margin-left: 6px;
+}
+
+.queue-table-wrap {
+    overflow-x: auto;
+}
+
+.queue-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.queue-table th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.queue-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    color: var(--text-primary);
+}
+
+.queue-table td.mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+}
+
+.queue-table tr:last-child td {
+    border-bottom: none;
+}
+
+.queue-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.queue-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.queue-status-queued .queue-badge,
+.queue-badge.queue-status-queued {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
+.queue-status-in-progress .queue-badge,
+.queue-badge.queue-status-in-progress {
+    background: rgba(168, 85, 247, 0.12);
+    color: var(--purple-400);
+    animation: badgePulse 1s ease-in-out infinite;
+}
+
+.queue-status-pending-retry .queue-badge,
+.queue-badge.queue-status-pending-retry {
+    background: rgba(251, 191, 36, 0.12);
+    color: var(--amber-400);
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+.queue-status-success .queue-badge,
+.queue-badge.queue-status-success {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--green-400);
+}
+
+.queue-status-failed .queue-badge,
+.queue-badge.queue-status-failed {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--red-400);
+}
+
+/* ============ BLACKLIST ============ */
+
+.blacklist-input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.blacklist-input-row .input {
+    flex: 1;
+}
+
+.blacklist-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 16px;
+}
+
+.blacklist-status {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.blacklist-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.blacklist-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px 5px 12px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.18);
+    border-radius: 16px;
+    transition: all 0.2s;
+}
+
+.blacklist-item:hover {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.blacklist-domain {
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    color: var(--red-400);
+}
+
+.blacklist-remove {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+    transition: all 0.15s;
+}
+
+.blacklist-remove:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--red-400);
+}
+
+.blacklist-empty {
+    width: 100%;
+    text-align: center;
+    padding: 24px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.blacklist-actions {
+    margin-top: 8px;
+}
+
+.btn-danger {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--red-400);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.2);
 }

@@ -7,6 +7,7 @@ const path = require('path');
 const { getPPPoEStatus, getSystemStats } = require('./lib/status');
 const registerRoutes = require('./lib/routes');
 const setupTerminal = require('./lib/terminal');
+const rotationQueue = require('./lib/rotation');
 
 const PORT = 3000;
 
@@ -23,6 +24,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 registerRoutes(app, io);
 setupTerminal(io);
+rotationQueue.init(io);
 
 // ============ AUTO REFRESH ============
 

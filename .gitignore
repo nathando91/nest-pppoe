@@ -15,3 +15,7 @@ __pycache__/
 *.pyc
 
 node_modules
+
+# Data files
+blacklist.txt
+IP.txt
