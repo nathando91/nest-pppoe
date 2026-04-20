@@ -3,7 +3,9 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { execSync } = require('child_process');
 const path = require('path');
+const crypto = require('crypto');
 
+const { readConfig } = require('./lib/config');
 const { getPPPoEStatus, getSystemStats } = require('./lib/status');
 const registerRoutes = require('./lib/routes');
 const setupTerminal = require('./lib/terminal');
@@ -19,6 +21,88 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.json());
+
+// ============ AUTH ============
+
+// Simple session token store (in-memory, resets on restart)
+var authTokens = new Set();
+
+function parseCookies(req) {
+    var cookies = {};
+    var header = req.headers.cookie || '';
+    header.split(';').forEach(function(c) {
+        var parts = c.trim().split('=');
+        if (parts.length >= 2) cookies[parts[0]] = parts.slice(1).join('=');
+    });
+    return cookies;
+}
+
+function isAuthenticated(req) {
+    var cookies = parseCookies(req);
+    var token = cookies['nest_token'];
+    return token && authTokens.has(token);
+}
+
+function isPasswordSet() {
+    var config = readConfig();
+    return !!(config.password && config.password.trim());
+}
+
+// Login endpoint — simple password check
+app.post('/api/auth/login', function(req, res) {
+    var password = (req.body.password || '').toString().trim();
+    var config = readConfig();
+    var configPw = (config.password || '').trim();
+
+    if (!configPw) {
+        // No password set → auto-grant access
+        var token = crypto.randomBytes(32).toString('hex');
+        authTokens.add(token);
+        res.setHeader('Set-Cookie', 'nest_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');
+        return res.json({ success: true });
+    }
+
+    if (password === configPw) {
+        var token = crypto.randomBytes(32).toString('hex');
+        authTokens.add(token);
+        res.setHeader('Set-Cookie', 'nest_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ success: false, error: 'Mật khẩu không đúng' });
+    }
+});
+
+// Check auth status (no auth required)
+app.get('/api/auth/status', function(req, res) {
+    var passwordConfigured = isPasswordSet();
+    res.json({
+        authenticated: !passwordConfigured || isAuthenticated(req),
+        passwordSet: passwordConfigured
+    });
+});
+
+// Logout endpoint
+app.post('/api/auth/logout', function(req, res) {
+    var cookies = parseCookies(req);
+    var token = cookies['nest_token'];
+    if (token) authTokens.delete(token);
+    res.setHeader('Set-Cookie', 'nest_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+    res.json({ success: true });
+});
+
+// Internal secret for server-to-server calls (auto-start on boot)
+var INTERNAL_SECRET = crypto.randomBytes(16).toString('hex');
+
+// Auth middleware — skip if no password configured
+app.use('/api', function(req, res, next) {
+    if (req.path.startsWith('/auth/')) return next();
+    if (req.headers['x-internal-secret'] === INTERNAL_SECRET) return next();
+    if (!isPasswordSet()) return next(); // No password → open access
+    if (isAuthenticated(req)) return next();
+    res.status(401).json({ error: 'Unauthorized' });
+});
+
+// Serve static files (no auth needed for HTML/CSS/JS)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============ REGISTER MODULES ============
@@ -65,7 +149,10 @@ server.listen(PORT, '0.0.0.0', function() {
                 port: PORT,
                 path: '/api/start-all',
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-internal-secret': INTERNAL_SECRET
+                }
             });
             autoReq.on('error', function(e) {
                 console.error('   Auto-start request failed:', e.message);

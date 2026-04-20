@@ -1,5 +1,6 @@
 {
     "device_code": "DNG_001",
+    "password": "",
     "pppoe": [
         {
             "username": "dng_gftth_nestgroupctt0",

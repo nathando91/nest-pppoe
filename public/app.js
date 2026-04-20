@@ -37,9 +37,88 @@ function cleanStaleBusy() {
     });
 }
 
+// ============ AUTH ============
+
+async function checkAuth() {
+    try {
+        var res = await fetch('/api/auth/status');
+        var data = await res.json();
+        return data;
+    } catch (e) { return { authenticated: false, passwordSet: false }; }
+}
+
+async function doLogin() {
+    var input = document.getElementById('loginCodeInput');
+    var errorEl = document.getElementById('loginError');
+    var btn = document.getElementById('loginBtn');
+    var password = input.value.trim();
+    if (!password) { errorEl.textContent = 'Vui lòng nhập mật khẩu'; return; }
+
+    btn.classList.add('loading');
+    errorEl.textContent = '';
+
+    try {
+        var res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: password })
+        });
+        var data = await res.json();
+        if (data.success) {
+            document.getElementById('loginOverlay').classList.remove('active');
+            document.getElementById('appHeader').style.display = '';
+            document.querySelector('.main').style.display = '';
+            document.getElementById('bottomNav').style.display = '';
+            initApp();
+        } else {
+            errorEl.textContent = data.error || 'Mật khẩu không đúng';
+            input.value = '';
+            input.focus();
+        }
+    } catch (e) {
+        errorEl.textContent = 'Lỗi kết nối server';
+    }
+    btn.classList.remove('loading');
+}
+
+async function doLogout() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) { /* ignore */ }
+    document.getElementById('loginOverlay').classList.add('active');
+    document.getElementById('appHeader').style.display = 'none';
+    document.querySelector('.main').style.display = 'none';
+    document.getElementById('bottomNav').style.display = 'none';
+    document.getElementById('loginCodeInput').value = '';
+    document.getElementById('loginCodeInput').focus();
+}
+
 // ============ INITIALIZATION ============
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Login input enter key
+    var loginInput = document.getElementById('loginCodeInput');
+    if (loginInput) loginInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+
+    var authResult = await checkAuth();
+    if (authResult.authenticated) {
+        document.getElementById('loginOverlay').classList.remove('active');
+        document.getElementById('appHeader').style.display = '';
+        document.querySelector('.main').style.display = '';
+        document.getElementById('bottomNav').style.display = '';
+        // Show/hide logout based on whether password is set
+        var logoutBtn = document.getElementById('btnLogout');
+        if (logoutBtn) logoutBtn.style.display = authResult.passwordSet ? '' : 'none';
+        initApp();
+    } else {
+        document.getElementById('loginOverlay').classList.add('active');
+        document.querySelector('.main').style.display = 'none';
+        document.getElementById('bottomNav').style.display = 'none';
+        loginInput.focus();
+    }
+});
+
+async function initApp() {
     await loadInterfacesForSelect();
     loadConfig();
     await fetchConfigForFarms();
@@ -48,11 +127,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadBlacklistUI();
     loadIPListUI();
     setupTabs();
+    renderOverview(null);
 
     // Enter key on blacklist input
     var blInput = document.getElementById('blacklistInput');
     if (blInput) blInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') addBlacklistDomain(); });
-});
+}
 
 // ============ TAB NAVIGATION ============
 
@@ -97,11 +177,16 @@ async function loadConfig() {
         const res = await fetch('/api/config');
         const config = await res.json();
         document.getElementById('configDeviceCode').value = config.device_code || '';
+        document.getElementById('configPassword').value = config.password || '';
         document.getElementById('deviceCode').textContent = config.device_code || 'N/A';
         renderAccounts(config.pppoe || []);
 
-        // Set auto-start toggle state
-        var autoCheckbox = document.getElementById('autoStartCheckbox');
+        // Store auto_start in configCache for renderOverview
+        if (!configCache) configCache = config;
+        else configCache.auto_start = config.auto_start;
+
+        // Set auto-start toggle state (checkbox is inside overview, may not exist yet)
+        var autoCheckbox = document.getElementById('ovAutoStartCheckbox');
         var autoToggle = document.getElementById('autoStartToggle');
         if (autoCheckbox) {
             autoCheckbox.checked = !!config.auto_start;
@@ -109,6 +194,31 @@ async function loadConfig() {
         }
     } catch (e) {
         console.error('Load config error:', e);
+    }
+}
+
+async function savePassword() {
+    var pw = document.getElementById('configPassword').value.trim();
+    try {
+        var res = await fetch('/api/config');
+        var config = await res.json();
+        config.password = pw;
+        var saveRes = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        var data = await saveRes.json();
+        if (data.success) {
+            showToast(pw ? '🔒 Đã đặt mật khẩu' : '🔓 Đã xoá mật khẩu — truy cập không cần đăng nhập', 'success');
+            // Show/hide logout button
+            var logoutBtn = document.getElementById('btnLogout');
+            if (logoutBtn) logoutBtn.style.display = pw ? '' : 'none';
+        } else {
+            showToast('Lỗi lưu: ' + (data.error || ''), 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi kết nối server', 'error');
     }
 }
 
@@ -126,7 +236,7 @@ async function toggleAutoStart(enabled) {
     } catch (e) {
         showToast('Lỗi lưu cấu hình', 'error');
         // Revert checkbox
-        var cb = document.getElementById('autoStartCheckbox');
+        var cb = document.getElementById('ovAutoStartCheckbox');
         if (cb) cb.checked = !enabled;
         if (autoToggle) autoToggle.classList.toggle('active', !enabled);
     }
@@ -220,7 +330,9 @@ function getAccountsFromForm() {
 async function saveConfig() {
     const config = {
         device_code: document.getElementById('configDeviceCode').value,
-        pppoe: getAccountsFromForm()
+        password: document.getElementById('configPassword').value.trim(),
+        pppoe: getAccountsFromForm(),
+        auto_start: !!(configCache && configCache.auto_start)
     };
 
     try {
@@ -597,6 +709,17 @@ function formatUptime(seconds) {
     return m + 'm';
 }
 
+function formatUptimeLong(seconds) {
+    var d = Math.floor(seconds / 86400);
+    var h = Math.floor((seconds % 86400) / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    var parts = [];
+    if (d > 0) parts.push(d + ' ngày');
+    if (h > 0) parts.push(h + ' giờ');
+    parts.push(m + ' phút');
+    return parts.join(' ');
+}
+
 function formatBytes(bytes) {
     if (bytes === 0) return '0';
     var gb = bytes / (1024 * 1024 * 1024);
@@ -606,52 +729,262 @@ function formatBytes(bytes) {
 }
 
 function updateStats(stats) {
-    // PPPoE & Proxy counts
-    document.getElementById('statPppd').textContent = stats.pppdCount || '0';
-    document.getElementById('statProxy').textContent = stats.proxyCount || '0';
+    // All stats are now in the overview dashboard
+    renderOverview(stats);
+}
 
-    // Uptime
-    var uptimeEl = document.getElementById('statUptime');
-    if (uptimeEl && stats.uptime) {
-        uptimeEl.textContent = formatUptime(stats.uptime);
-    }
+// ============ SYSTEM OVERVIEW DASHBOARD ============
 
-    // CPU
-    var cpuPercent = stats.cpuPercent || 0;
-    var cpuEl = document.getElementById('statCpu');
-    var cpuBar = document.getElementById('statCpuBar');
-    if (cpuEl) cpuEl.textContent = cpuPercent.toFixed(0) + '%';
-    if (cpuBar) {
-        cpuBar.style.width = Math.min(100, cpuPercent) + '%';
-        cpuBar.className = 'sys-bar sys-bar-cpu';
-        if (cpuPercent > 80) cpuBar.classList.add('critical');
-        else if (cpuPercent > 50) cpuBar.classList.add('high');
-    }
+var lastStats = null;
 
-    // RAM
-    var totalMem = stats.totalMem || 1;
-    var freeMem = stats.freeMem || 0;
+function renderOverview(stats) {
+    if (stats) lastStats = stats;
+    if (!lastStats) return;
+    var s = lastStats;
+
+    var cpuPercent = s.cpuPercent || 0;
+    var totalMem = s.totalMem || 1;
+    var freeMem = s.freeMem || 0;
     var usedMem = totalMem - freeMem;
     var ramPercent = Math.round((usedMem / totalMem) * 100);
-    var ramEl = document.getElementById('statRam');
-    var ramBar = document.getElementById('statRamBar');
-    if (ramEl) ramEl.textContent = ramPercent + '%';
-    if (ramBar) {
-        ramBar.style.width = ramPercent + '%';
-        ramBar.className = 'sys-bar sys-bar-ram';
-        if (ramPercent > 85) ramBar.classList.add('high');
+    var diskPercent = s.diskPercent || 0;
+    var uptime = s.uptime || 0;
+    var pppdCount = s.pppdCount || 0;
+    var proxyCount = s.proxyCount || 0;
+    var cpuCores = s.cpuCores || 1;
+    var loadAvg = s.loadAvg || [0, 0, 0];
+
+    // Total sessions from configCache
+    var totalSessions = 0;
+    var totalFarms = 0;
+    if (configCache && configCache.pppoe) {
+        totalFarms = configCache.pppoe.length;
+        for (var i = 0; i < configCache.pppoe.length; i++) {
+            totalSessions += configCache.pppoe[i].max_session || 30;
+        }
     }
 
-    // Disk
-    var diskPercent = stats.diskPercent || 0;
-    var diskEl = document.getElementById('statDisk');
-    var diskBar = document.getElementById('statDiskBar');
-    if (diskEl) diskEl.textContent = diskPercent + '%';
-    if (diskBar) {
-        diskBar.style.width = diskPercent + '%';
-        diskBar.className = 'sys-bar sys-bar-disk';
-        if (diskPercent > 85) diskBar.classList.add('high');
+    // Connected sessions from sessionsData
+    var connectedSessions = 0;
+    var stoppedSessions = 0;
+    if (sessionsData && sessionsData.length > 0) {
+        sessionsData.forEach(function(sess) {
+            if (sess.status === 'connected') connectedSessions++;
+            else if (sess.status === 'stopped') stoppedSessions++;
+        });
     }
+
+    function getBarColor(pct) {
+        if (pct > 85) return 'var(--red-400)';
+        if (pct > 60) return 'var(--amber-400)';
+        return 'var(--green-400)';
+    }
+
+    function getBarGradient(type) {
+        if (type === 'cpu') return 'linear-gradient(90deg, #22c55e, #fbbf24)';
+        if (type === 'ram') return 'linear-gradient(90deg, #818cf8, #c084fc)';
+        if (type === 'disk') return 'linear-gradient(90deg, #22d3ee, #60a5fa)';
+        return 'var(--indigo-400)';
+    }
+
+    var grid = document.getElementById('overviewGrid');
+    if (!grid) return;
+
+    // Auto Start checkbox state
+    var autoChecked = '';
+    try {
+        var cb = document.getElementById('ovAutoStartCheckbox');
+        if (cb && cb.checked) autoChecked = ' checked';
+        // On first load, use configCache
+        if (!cb && configCache && configCache.auto_start) autoChecked = ' checked';
+    } catch(e) {}
+
+    grid.innerHTML = `
+        <div class="ov-row ov-row-controls">
+            <div class="ov-card ov-card-controls">
+                <div class="ov-controls-bar">
+                    <button class="ov-ctrl-btn ov-ctrl-start" onclick="confirmStartAll()" id="btnStartAll" title="Start All">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        Start All
+                    </button>
+                    <button class="ov-ctrl-btn ov-ctrl-stop" onclick="confirmStopAll()" id="btnStopAll" title="Stop All">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        Stop All
+                    </button>
+                    <button class="ov-ctrl-btn ov-ctrl-refresh" onclick="refreshStatus()" id="btnRefresh" title="Refresh">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        Refresh
+                    </button>
+                    <button class="ov-ctrl-btn ov-ctrl-check" onclick="checkAll()" id="btnCheckAll" title="Check All">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Check All
+                    </button>
+                    <div class="ov-ctrl-divider"></div>
+                    <div class="auto-start-toggle" id="autoStartToggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="ovAutoStartCheckbox" onchange="toggleAutoStart(this.checked)"${autoChecked}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label">Auto Start</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="ov-row ov-row-top">
+            <div class="ov-card ov-card-uptime">
+                <div class="ov-card-icon uptime-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+                <div class="ov-card-body">
+                    <div class="ov-card-label">Uptime</div>
+                    <div class="ov-card-value">${formatUptimeLong(uptime)}</div>
+                </div>
+            </div>
+            <div class="ov-card ov-card-device">
+                <div class="ov-card-icon device-icon-ov">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </div>
+                <div class="ov-card-body">
+                    <div class="ov-card-label">Device</div>
+                    <div class="ov-card-value" style="font-size:18px">${escapeHtml((configCache && configCache.device_code) || 'N/A')}</div>
+                    <div class="ov-card-sub">${cpuCores} CPU cores · Load: ${loadAvg[0].toFixed(2)}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="ov-row ov-row-metrics">
+            <div class="ov-card ov-card-metric">
+                <div class="ov-metric-header">
+                    <span class="ov-metric-icon">⚡</span>
+                    <span class="ov-metric-label">CPU</span>
+                    <span class="ov-metric-value" style="color:${getBarColor(cpuPercent)}">${cpuPercent.toFixed(1)}%</span>
+                </div>
+                <div class="ov-progress-bar">
+                    <div class="ov-progress-fill" style="width:${Math.min(100, cpuPercent)}%;background:${getBarGradient('cpu')}"></div>
+                </div>
+                <div class="ov-metric-detail">${cpuCores} cores · Load avg: ${loadAvg[0].toFixed(2)}, ${loadAvg[1].toFixed(2)}, ${loadAvg[2].toFixed(2)}</div>
+            </div>
+            <div class="ov-card ov-card-metric">
+                <div class="ov-metric-header">
+                    <span class="ov-metric-icon">🧠</span>
+                    <span class="ov-metric-label">RAM</span>
+                    <span class="ov-metric-value" style="color:${getBarColor(ramPercent)}">${ramPercent}%</span>
+                </div>
+                <div class="ov-progress-bar">
+                    <div class="ov-progress-fill" style="width:${ramPercent}%;background:${getBarGradient('ram')}"></div>
+                </div>
+                <div class="ov-metric-detail">${formatBytes(usedMem)} / ${formatBytes(totalMem)} sử dụng</div>
+            </div>
+            <div class="ov-card ov-card-metric">
+                <div class="ov-metric-header">
+                    <span class="ov-metric-icon">💾</span>
+                    <span class="ov-metric-label">Disk</span>
+                    <span class="ov-metric-value" style="color:${getBarColor(diskPercent)}">${diskPercent}%</span>
+                </div>
+                <div class="ov-progress-bar">
+                    <div class="ov-progress-fill" style="width:${diskPercent}%;background:${getBarGradient('disk')}"></div>
+                </div>
+                <div class="ov-metric-detail">${s.diskUsed ? formatBytes(s.diskUsed) : '?'} / ${s.diskTotal ? formatBytes(s.diskTotal) : '?'} sử dụng</div>
+            </div>
+        </div>
+
+        <div class="ov-row ov-row-services">
+            <div class="ov-card ov-card-service ov-service-pppoe">
+                <div class="ov-service-ring">
+                    <svg class="ov-ring-svg" viewBox="0 0 64 64">
+                        <circle cx="32" cy="32" r="28" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="5"/>
+                        <circle cx="32" cy="32" r="28" fill="none" stroke="url(#gradPppoe)" stroke-width="5" stroke-linecap="round"
+                            stroke-dasharray="${totalSessions > 0 ? (connectedSessions / totalSessions) * 175.9 : 0} 175.9"
+                            transform="rotate(-90 32 32)" class="ov-ring-progress"/>
+                        <defs><linearGradient id="gradPppoe" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#4ade80"/><stop offset="1" stop-color="#22c55e"/></linearGradient></defs>
+                    </svg>
+                    <div class="ov-ring-center">
+                        <span class="ov-ring-num">${pppdCount}</span>
+                    </div>
+                </div>
+                <div class="ov-service-info">
+                    <div class="ov-service-title">PPPoE Sessions</div>
+                    <div class="ov-service-detail">
+                        <span class="ov-dot dot-green"></span> ${connectedSessions} kết nối
+                        <span class="ov-dot dot-offline" style="margin-left:8px"></span> ${stoppedSessions} dừng
+                    </div>
+                    <div class="ov-service-sub">${totalFarms} farm · ${totalSessions} tổng sessions</div>
+                </div>
+            </div>
+            <div class="ov-card ov-card-service ov-service-proxy">
+                <div class="ov-service-ring">
+                    <svg class="ov-ring-svg" viewBox="0 0 64 64">
+                        <circle cx="32" cy="32" r="28" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="5"/>
+                        <circle cx="32" cy="32" r="28" fill="none" stroke="url(#gradProxy)" stroke-width="5" stroke-linecap="round"
+                            stroke-dasharray="${totalSessions > 0 ? (proxyCount / totalSessions) * 175.9 : 0} 175.9"
+                            transform="rotate(-90 32 32)" class="ov-ring-progress"/>
+                        <defs><linearGradient id="gradProxy" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#818cf8"/></linearGradient></defs>
+                    </svg>
+                    <div class="ov-ring-center">
+                        <span class="ov-ring-num">${proxyCount}</span>
+                    </div>
+                </div>
+                <div class="ov-service-info">
+                    <div class="ov-service-title">3proxy Instances</div>
+                    <div class="ov-service-detail">
+                        <span class="ov-dot dot-blue"></span> ${proxyCount} đang chạy
+                    </div>
+                    <div class="ov-service-sub">${totalSessions > 0 ? Math.round((proxyCount / totalSessions) * 100) : 0}% hoạt động</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="ov-row ov-row-farms-summary">
+            <div class="ov-card ov-card-farms-overview">
+                <div class="ov-farms-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--indigo-400)" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                    <span>Farm Overview</span>
+                </div>
+                <div class="ov-farms-list" id="overviewFarmsList">
+                    ${renderOverviewFarms()}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderOverviewFarms() {
+    if (!configCache || !configCache.pppoe || configCache.pppoe.length === 0) {
+        return '<div class="ov-farms-empty">Chưa có farm nào được cấu hình</div>';
+    }
+    var accounts = configCache.pppoe;
+    var offset = 0;
+    var html = '';
+    for (var a = 0; a < accounts.length; a++) {
+        var acc = accounts[a];
+        var maxSess = acc.max_session || 30;
+        var nicName = acc.interface || 'enp1s0f0';
+
+        // Count online sessions for this farm
+        var online = 0;
+        for (var i = offset; i < offset + maxSess && i < sessionsData.length; i++) {
+            if (sessionsData[i].status === 'connected') online++;
+        }
+        var pct = maxSess > 0 ? Math.round((online / maxSess) * 100) : 0;
+
+        html += `
+        <div class="ov-farm-row">
+            <div class="ov-farm-idx">${a + 1}</div>
+            <div class="ov-farm-info">
+                <div class="ov-farm-name">${escapeHtml(acc.username || 'Account ' + (a + 1))}</div>
+                <div class="ov-farm-detail">🔌 ${escapeHtml(nicName)} · ppp${offset}-ppp${offset + maxSess - 1}</div>
+            </div>
+            <div class="ov-farm-bar-wrap">
+                <div class="ov-farm-bar" style="width:${pct}%"></div>
+            </div>
+            <div class="ov-farm-stats">
+                <span class="ov-farm-online">${online}</span>/<span class="ov-farm-total">${maxSess}</span>
+            </div>
+        </div>`;
+        offset += maxSess;
+    }
+    return html;
 }
 
 // ============ ACTIONS ============
