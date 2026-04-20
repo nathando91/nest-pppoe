@@ -27,6 +27,55 @@ app.use(express.json());
 // Simple session token store (in-memory, resets on restart)
 var authTokens = new Set();
 
+// Brute-force protection: track failed login attempts per IP
+// { ip: { count: number, lastAttempt: number, lockedUntil: number } }
+var loginAttempts = new Map();
+var MAX_ATTEMPTS_BEFORE_LOCK = 5;
+// Progressive lockout durations (in ms): after 5, 10, 15, 20+ failures
+var LOCKOUT_TIERS = [
+    { threshold: 5,  duration: 60 * 1000 },      // 1 minute
+    { threshold: 10, duration: 5 * 60 * 1000 },   // 5 minutes
+    { threshold: 15, duration: 15 * 60 * 1000 },  // 15 minutes
+    { threshold: 20, duration: 30 * 60 * 1000 }   // 30 minutes
+];
+
+function getClientIP(req) {
+    return req.headers['x-forwarded-for']
+        ? req.headers['x-forwarded-for'].split(',')[0].trim()
+        : req.connection.remoteAddress || req.ip || 'unknown';
+}
+
+function getLockoutDuration(failCount) {
+    var duration = 0;
+    for (var i = LOCKOUT_TIERS.length - 1; i >= 0; i--) {
+        if (failCount >= LOCKOUT_TIERS[i].threshold) {
+            duration = LOCKOUT_TIERS[i].duration;
+            break;
+        }
+    }
+    return duration;
+}
+
+function getNextLockThreshold(failCount) {
+    for (var i = 0; i < LOCKOUT_TIERS.length; i++) {
+        if (failCount < LOCKOUT_TIERS[i].threshold) {
+            return LOCKOUT_TIERS[i].threshold;
+        }
+    }
+    return LOCKOUT_TIERS[LOCKOUT_TIERS.length - 1].threshold;
+}
+
+// Clean up stale entries every 10 minutes
+setInterval(function() {
+    var now = Date.now();
+    loginAttempts.forEach(function(info, ip) {
+        // Remove entries that haven't had activity in 1 hour
+        if (now - info.lastAttempt > 60 * 60 * 1000) {
+            loginAttempts.delete(ip);
+        }
+    });
+}, 10 * 60 * 1000);
+
 function parseCookies(req) {
     var cookies = {};
     var header = req.headers.cookie || '';
@@ -48,8 +97,25 @@ function isPasswordSet() {
     return !!(config.password && config.password.trim());
 }
 
-// Login endpoint — simple password check
+// Login endpoint with brute-force protection
 app.post('/api/auth/login', function(req, res) {
+    var clientIP = getClientIP(req);
+    var now = Date.now();
+
+    // Check if this IP is currently locked out
+    var attemptInfo = loginAttempts.get(clientIP);
+    if (attemptInfo && attemptInfo.lockedUntil && now < attemptInfo.lockedUntil) {
+        var remainingMs = attemptInfo.lockedUntil - now;
+        var remainingSec = Math.ceil(remainingMs / 1000);
+        return res.status(429).json({
+            success: false,
+            error: 'Quá nhiều lần thử. Vui lòng đợi ' + remainingSec + ' giây',
+            locked: true,
+            lockoutUntil: attemptInfo.lockedUntil,
+            remainingSeconds: remainingSec
+        });
+    }
+
     var password = (req.body.password || '').toString().trim();
     var config = readConfig();
     var configPw = (config.password || '').trim();
@@ -59,16 +125,61 @@ app.post('/api/auth/login', function(req, res) {
         var token = crypto.randomBytes(32).toString('hex');
         authTokens.add(token);
         res.setHeader('Set-Cookie', 'nest_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');
+        loginAttempts.delete(clientIP); // Clear on success
         return res.json({ success: true });
     }
 
-    if (password === configPw) {
+    // Constant-time comparison to prevent timing attacks
+    var inputBuf = Buffer.from(password);
+    var configBuf = Buffer.from(configPw);
+    var match = inputBuf.length === configBuf.length &&
+                crypto.timingSafeEqual(inputBuf, configBuf);
+
+    if (match) {
+        // Success — clear failed attempts
+        loginAttempts.delete(clientIP);
         var token = crypto.randomBytes(32).toString('hex');
         authTokens.add(token);
         res.setHeader('Set-Cookie', 'nest_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');
         res.json({ success: true });
     } else {
-        res.status(401).json({ success: false, error: 'Mật khẩu không đúng' });
+        // Failed attempt — increment counter
+        if (!attemptInfo) {
+            attemptInfo = { count: 0, lastAttempt: 0, lockedUntil: 0 };
+        }
+        attemptInfo.count++;
+        attemptInfo.lastAttempt = now;
+
+        // Check if lockout threshold is reached
+        var lockDuration = getLockoutDuration(attemptInfo.count);
+        if (lockDuration > 0) {
+            attemptInfo.lockedUntil = now + lockDuration;
+            loginAttempts.set(clientIP, attemptInfo);
+            var lockSec = Math.ceil(lockDuration / 1000);
+            console.log('🔒 Login locked for IP ' + clientIP + ' — ' + attemptInfo.count + ' failed attempts, locked for ' + lockSec + 's');
+            return res.status(429).json({
+                success: false,
+                error: 'Quá nhiều lần thử sai. Bị khóa ' + lockSec + ' giây',
+                locked: true,
+                lockoutUntil: attemptInfo.lockedUntil,
+                remainingSeconds: lockSec,
+                failedAttempts: attemptInfo.count
+            });
+        }
+
+        loginAttempts.set(clientIP, attemptInfo);
+
+        // Calculate remaining attempts before next lockout
+        var nextThreshold = getNextLockThreshold(attemptInfo.count);
+        var remaining = nextThreshold - attemptInfo.count;
+
+        console.log('⚠️  Failed login from IP ' + clientIP + ' — attempt #' + attemptInfo.count + ' (' + remaining + ' left before lock)');
+        res.status(401).json({
+            success: false,
+            error: 'Mật khẩu không đúng',
+            remainingAttempts: remaining,
+            failedAttempts: attemptInfo.count
+        });
     }
 });
 

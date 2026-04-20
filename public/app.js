@@ -47,15 +47,22 @@ async function checkAuth() {
     } catch (e) { return { authenticated: false, passwordSet: false }; }
 }
 
+var loginLockoutTimer = null;
+
 async function doLogin() {
     var input = document.getElementById('loginCodeInput');
     var errorEl = document.getElementById('loginError');
+    var attemptsEl = document.getElementById('loginAttempts');
+    var lockoutEl = document.getElementById('loginLockout');
     var btn = document.getElementById('loginBtn');
     var password = input.value.trim();
     if (!password) { errorEl.textContent = 'Vui lòng nhập mật khẩu'; return; }
 
     btn.classList.add('loading');
+    btn.disabled = true;
     errorEl.textContent = '';
+    if (attemptsEl) attemptsEl.textContent = '';
+    if (lockoutEl) lockoutEl.style.display = 'none';
 
     try {
         var res = await fetch('/api/auth/login', {
@@ -70,8 +77,24 @@ async function doLogin() {
             document.querySelector('.main').style.display = '';
             document.getElementById('bottomNav').style.display = '';
             initApp();
+        } else if (data.locked) {
+            // Account is locked out — show countdown
+            errorEl.textContent = '';
+            startLockoutCountdown(data.lockoutUntil || (Date.now() + (data.remainingSeconds || 60) * 1000));
+            input.value = '';
+            input.disabled = true;
         } else {
             errorEl.textContent = data.error || 'Mật khẩu không đúng';
+            // Show remaining attempts warning
+            if (attemptsEl && data.remainingAttempts !== undefined) {
+                if (data.remainingAttempts <= 3) {
+                    attemptsEl.textContent = '⚠️ Còn ' + data.remainingAttempts + ' lần thử trước khi bị khóa';
+                    attemptsEl.className = 'login-attempts warning';
+                } else {
+                    attemptsEl.textContent = 'Còn ' + data.remainingAttempts + ' lần thử';
+                    attemptsEl.className = 'login-attempts';
+                }
+            }
             input.value = '';
             input.focus();
         }
@@ -79,6 +102,46 @@ async function doLogin() {
         errorEl.textContent = 'Lỗi kết nối server';
     }
     btn.classList.remove('loading');
+    if (!input.disabled) btn.disabled = false;
+}
+
+function startLockoutCountdown(lockoutUntil) {
+    var lockoutEl = document.getElementById('loginLockout');
+    var lockoutTimeEl = document.getElementById('lockoutTime');
+    var errorEl = document.getElementById('loginError');
+    var attemptsEl = document.getElementById('loginAttempts');
+    var input = document.getElementById('loginCodeInput');
+    var btn = document.getElementById('loginBtn');
+
+    if (!lockoutEl || !lockoutTimeEl) return;
+
+    if (attemptsEl) attemptsEl.textContent = '';
+    if (errorEl) errorEl.textContent = '';
+    lockoutEl.style.display = 'flex';
+    input.disabled = true;
+    btn.disabled = true;
+
+    // Clear any previous timer
+    if (loginLockoutTimer) clearInterval(loginLockoutTimer);
+
+    function updateCountdown() {
+        var remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+        if (remaining <= 0) {
+            clearInterval(loginLockoutTimer);
+            loginLockoutTimer = null;
+            lockoutEl.style.display = 'none';
+            input.disabled = false;
+            btn.disabled = false;
+            input.focus();
+            return;
+        }
+        var mins = Math.floor(remaining / 60);
+        var secs = remaining % 60;
+        lockoutTimeEl.textContent = (mins > 0 ? mins + ':' : '') + (secs < 10 && mins > 0 ? '0' : '') + secs + (mins > 0 ? '' : 's');
+    }
+
+    updateCountdown();
+    loginLockoutTimer = setInterval(updateCountdown, 1000);
 }
 
 async function doLogout() {
@@ -1403,6 +1466,8 @@ socket.on('refresh', () => {
     fetchConfigForFarms().then(() => {
         setTimeout(refreshStatus, 1000);
     });
+    // Reload IP list (IP.txt may have changed)
+    loadIPListUI();
 });
 
 // ============ ROTATION QUEUE ============
@@ -1893,6 +1958,10 @@ function reconnectConsole() {
                     xterm.focus();
                 }
             }, 50);
+        }
+        // Reload IP list when switching to settings tab
+        if (target === 'config') {
+            loadIPListUI();
         }
     };
 })();

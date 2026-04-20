@@ -37,6 +37,16 @@
             <div class="login-form">
                 <input type="password" class="login-input" id="loginCodeInput" placeholder="Mật khẩu" autocomplete="current-password">
                 <div class="login-error" id="loginError"></div>
+                <div class="login-attempts" id="loginAttempts"></div>
+                <div class="login-lockout" id="loginLockout" style="display:none">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="lockout-icon">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <div class="lockout-text">
+                        <span>Tạm khóa đăng nhập</span>
+                        <span class="lockout-time" id="lockoutTime">--</span>
+                    </div>
+                </div>
                 <button class="login-btn" onclick="doLogin()" id="loginBtn">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                     Đăng nhập
