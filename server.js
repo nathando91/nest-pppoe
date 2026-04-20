@@ -8,6 +8,7 @@ const { getPPPoEStatus, getSystemStats } = require('./lib/status');
 const registerRoutes = require('./lib/routes');
 const setupTerminal = require('./lib/terminal');
 const rotationQueue = require('./lib/rotation');
+const healthCheck = require('./lib/healthcheck');
 
 const PORT = 3000;
 
@@ -25,6 +26,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 registerRoutes(app, io);
 setupTerminal(io);
 rotationQueue.init(io);
+healthCheck.init(io, rotationQueue);
 
 // ============ AUTO REFRESH ============
 
@@ -51,45 +53,78 @@ server.listen(PORT, '0.0.0.0', function() {
     console.log('');
 
     // Auto-recover: restart 3proxy for active PPPoE sessions
-    recoverProxies();
+    recoverProxies().then(function() {
+        // Check auto_start config
+        var { readConfig } = require('./lib/config');
+        var config = readConfig();
+        if (config.auto_start) {
+            console.log('🟢 Auto Start is ON — starting all sessions...');
+            // Trigger start-all via internal HTTP call
+            var autoReq = http.request({
+                hostname: '127.0.0.1',
+                port: PORT,
+                path: '/api/start-all',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            autoReq.on('error', function(e) {
+                console.error('   Auto-start request failed:', e.message);
+            });
+            autoReq.end();
+        } else {
+            console.log('⚪ Auto Start is OFF — sessions will not auto-start');
+        }
+    });
 });
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
-    var { getSessionIP, setupProxy, sleep } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, connectPppoe, sleep } = require('./lib/pppoe');
 
     var config = readConfig();
     var total = getTotalSessions(config);
     var recovered = 0;
+    var downSessions = [];
 
     // Check if any 3proxy is already running
+    var alreadyRunning = false;
     try {
         var proxyCount = execSync('pgrep -c 3proxy 2>/dev/null || echo 0', { encoding: 'utf8' }).trim();
         if (parseInt(proxyCount) > 0) {
-            console.log('✅ 3proxy already running (' + proxyCount + ' processes), skip recovery');
-            return;
+            alreadyRunning = true;
         }
     } catch (e) { /* ignore */ }
 
-    console.log('🔄 Auto-recovering 3proxy for active sessions...');
+    if (!alreadyRunning) {
+        console.log('🔄 Auto-recovering 3proxy for active sessions...');
+    }
 
     for (var i = 0; i < total; i++) {
         var iface = 'ppp' + i;
         var ip = await getSessionIP(iface);
         if (ip) {
-            try {
-                await setupProxy(i, ip);
-                recovered++;
-            } catch (e) {
-                console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
+            if (!alreadyRunning) {
+                try {
+                    await setupProxy(i, ip);
+                    recovered++;
+                } catch (e) {
+                    console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
+                }
             }
+        } else {
+            // Session is down — collect for auto-start
+            downSessions.push(i);
         }
     }
 
-    if (recovered > 0) {
+    if (!alreadyRunning && recovered > 0) {
         console.log('✅ Recovered 3proxy for ' + recovered + '/' + total + ' sessions');
         io.emit('refresh');
-    } else {
-        console.log('ℹ️  No active PPPoE sessions to recover');
+    }
+
+    // Log down sessions (health check will handle auto-starting if needed)
+    if (downSessions.length > 0) {
+        console.log('ℹ️  ' + downSessions.length + ' sessions are down: ppp' + downSessions.join(', ppp'));
+        console.log('   Health check will auto-start them if needed (after 30s delay)');
     }
 }

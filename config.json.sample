@@ -8,5 +8,5 @@
             "interface": "enp1s0f0"
         }
     ],
-    "auto_start": false
+    "auto_start": true
 }

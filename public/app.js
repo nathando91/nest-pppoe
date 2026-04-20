@@ -39,12 +39,14 @@ function cleanStaleBusy() {
 
 // ============ INITIALIZATION ============
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadInterfacesForSelect();
     loadConfig();
-    loadInterfaces();
+    await fetchConfigForFarms();
     refreshStatus();
     loadRotationQueue();
     loadBlacklistUI();
+    loadIPListUI();
     setupTabs();
 
     // Enter key on blacklist input
@@ -55,13 +57,35 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============ TAB NAVIGATION ============
 
 function setupTabs() {
+    function switchTab(target) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
+
+        // Activate top tab
+        var topTab = document.querySelector('.tab[data-tab="' + target + '"]');
+        if (topTab) topTab.classList.add('active');
+
+        // Activate bottom nav item
+        var bnItem = document.querySelector('.bottom-nav-item[data-tab="' + target + '"]');
+        if (bnItem) bnItem.classList.add('active');
+
+        // Activate content
+        var content = document.getElementById(target + 'Tab');
+        if (content) content.classList.add('active');
+    }
+
+    // Top tabs
     document.querySelectorAll('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
-            const target = tab.dataset.tab;
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            tab.classList.add('active');
-            document.getElementById(`${target}Tab`).classList.add('active');
+            switchTab(tab.dataset.tab);
+        });
+    });
+
+    // Bottom nav items
+    document.querySelectorAll('.bottom-nav-item').forEach(item => {
+        item.addEventListener('click', () => {
+            switchTab(item.dataset.tab);
         });
     });
 }
@@ -75,9 +99,58 @@ async function loadConfig() {
         document.getElementById('configDeviceCode').value = config.device_code || '';
         document.getElementById('deviceCode').textContent = config.device_code || 'N/A';
         renderAccounts(config.pppoe || []);
+
+        // Set auto-start toggle state
+        var autoCheckbox = document.getElementById('autoStartCheckbox');
+        var autoToggle = document.getElementById('autoStartToggle');
+        if (autoCheckbox) {
+            autoCheckbox.checked = !!config.auto_start;
+            if (autoToggle) autoToggle.classList.toggle('active', !!config.auto_start);
+        }
     } catch (e) {
         console.error('Load config error:', e);
     }
+}
+
+async function toggleAutoStart(enabled) {
+    var autoToggle = document.getElementById('autoStartToggle');
+    if (autoToggle) autoToggle.classList.toggle('active', enabled);
+
+    try {
+        await fetch('/api/auto-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        });
+        showToast(enabled ? '✅ Auto Start đã bật' : '⏹ Auto Start đã tắt', enabled ? 'success' : 'info');
+    } catch (e) {
+        showToast('Lỗi lưu cấu hình', 'error');
+        // Revert checkbox
+        var cb = document.getElementById('autoStartCheckbox');
+        if (cb) cb.checked = !enabled;
+        if (autoToggle) autoToggle.classList.toggle('active', !enabled);
+    }
+}
+
+let interfacesCache = [];
+
+async function loadInterfacesForSelect() {
+    try {
+        var res = await fetch('/api/interfaces');
+        interfacesCache = await res.json();
+    } catch (e) { /* use cached */ }
+}
+
+function renderNicSelect(selectedNic, idx) {
+    var val = selectedNic || '';
+    var options = '<option value="">-- Chọn NIC --</option>';
+    for (var i = 0; i < interfacesCache.length; i++) {
+        var nic = interfacesCache[i];
+        var sel = nic.name === val ? ' selected' : '';
+        var stateIcon = nic.state === 'up' ? '🟢' : '🔴';
+        options += '<option value="' + escapeHtml(nic.name) + '"' + sel + '>' + stateIcon + ' ' + escapeHtml(nic.name) + '</option>';
+    }
+    return '<select class="account-input account-input-nic" data-field="interface" data-idx="' + idx + '" title="Network interface">' + options + '</select>';
 }
 
 function renderAccounts(accounts) {
@@ -102,8 +175,9 @@ function renderAccounts(accounts) {
                     data-field="password" data-idx="${idx}">
                 <input type="number" class="account-input account-input-small" placeholder="Sessions" value="${acc.max_session || 30}"
                     data-field="max_session" data-idx="${idx}" min="1" max="100" title="Số session tối đa">
+                ${renderNicSelect(acc.interface, idx)}
             </div>
-            <div class="account-info">→ ${acc.max_session || 30} sessions</div>
+            <div class="account-info">→ ${acc.max_session || 30} sessions · ${escapeHtml(acc.interface || '(chưa chọn)')}</div>
             <button class="account-delete" onclick="removeAccount(${idx})" title="Xóa account">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
@@ -113,7 +187,7 @@ function renderAccounts(accounts) {
 
 function addAccount() {
     const accounts = getAccountsFromForm();
-    accounts.push({ username: '', password: '', max_session: 30 });
+    accounts.push({ username: '', password: '', max_session: 30, interface: '' });
     renderAccounts(accounts);
     // Focus new username input
     setTimeout(() => {
@@ -134,7 +208,11 @@ function getAccountsFromForm() {
         const username = card.querySelector('[data-field="username"]').value;
         const password = card.querySelector('[data-field="password"]').value;
         const maxSession = parseInt(card.querySelector('[data-field="max_session"]').value) || 30;
-        accounts.push({ username, password, max_session: maxSession });
+        const iface = card.querySelector('[data-field="interface"]');
+        const ifaceVal = iface ? iface.value.trim() : '';
+        var acc = { username, password, max_session: maxSession };
+        if (ifaceVal) acc.interface = ifaceVal;
+        accounts.push(acc);
     });
     return accounts;
 }
@@ -155,6 +233,8 @@ async function saveConfig() {
         if (data.success) {
             showToast('Đã lưu cấu hình thành công!', 'success');
             document.getElementById('deviceCode').textContent = config.device_code;
+            configCache = config;
+            renderFarms(sessionsData);
         } else {
             showToast('Lỗi lưu cấu hình: ' + (data.error || ''), 'error');
         }
@@ -334,25 +414,142 @@ function renderSessionCard(s) {
     </div>`;
 }
 
-function renderSessions(sessions) {
-    const grid = document.getElementById('sessionsGrid');
-    const filtered = sessions.filter(s => {
-        if (currentFilter === 'connected') return s.status === 'connected' || s.status === 'rotating' || s.status === 'connecting';
-        if (currentFilter === 'stopped') return s.status === 'stopped' || s.status === 'stopping';
-        return true;
-    });
+let configCache = null;
 
-    if (filtered.length === 0) {
-        grid.innerHTML = `
-            <div class="empty-state" style="grid-column: 1/-1">
+async function fetchConfigForFarms() {
+    try {
+        var res = await fetch('/api/config');
+        configCache = await res.json();
+    } catch (e) { /* use cached */ }
+    return configCache || { pppoe: [] };
+}
+
+function renderFarms(sessions) {
+    var container = document.getElementById('farmsContainer');
+    if (!configCache || !configCache.pppoe || configCache.pppoe.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="padding:40px">
                 <div class="empty-state-icon">📡</div>
-                <h3>Chưa có session nào</h3>
-                <p>Cấu hình account PPPoE và chạy Install để tạo sessions.</p>
+                <h3>Chưa có farm nào</h3>
+                <p>Cấu hình account PPPoE trong tab Cài đặt và chạy Install.</p>
             </div>`;
         return;
     }
 
-    grid.innerHTML = filtered.map(s => renderSessionCard(s)).join('');
+    var accounts = configCache.pppoe;
+    var offset = 0;
+    var html = '';
+
+    for (var a = 0; a < accounts.length; a++) {
+        var acc = accounts[a];
+        var maxSess = acc.max_session || 30;
+        var nicName = acc.interface || 'enp1s0f0';
+
+        // Get sessions for this farm
+        var farmSessions = [];
+        for (var i = offset; i < offset + maxSess && i < sessions.length; i++) {
+            farmSessions.push(sessions[i]);
+        }
+
+        // Apply filter
+        var filtered = farmSessions.filter(function(s) {
+            if (currentFilter === 'connected') return s.status === 'connected' || s.status === 'rotating' || s.status === 'connecting';
+            if (currentFilter === 'stopped') return s.status === 'stopped' || s.status === 'stopping';
+            return true;
+        });
+
+        // Count stats
+        var online = farmSessions.filter(function(s) { return s.status === 'connected'; }).length;
+        var total = farmSessions.length;
+
+        // Check collapsed state
+        var isCollapsed = document.querySelector('.farm-card[data-farm="' + a + '"]');
+        var collapsed = isCollapsed ? isCollapsed.classList.contains('collapsed') : false;
+
+        html += `
+        <div class="farm-card${collapsed ? ' collapsed' : ''}" data-farm="${a}">
+            <div class="farm-header" onclick="toggleFarm(${a})">
+                <div class="farm-idx">${a + 1}</div>
+                <div class="farm-info">
+                    <div class="farm-title">
+                        ${escapeHtml(acc.username || 'Account ' + (a + 1))}
+                        <span class="farm-nic-badge">🔌 ${escapeHtml(nicName)}</span>
+                    </div>
+                    <div class="farm-subtitle">ppp${offset} — ppp${offset + maxSess - 1} · ${maxSess} sessions</div>
+                </div>
+                <div class="farm-stats">
+                    <div class="farm-stat">
+                        <span class="dot dot-online"></span>
+                        <span style="color:var(--green-400)">${online}</span>
+                    </div>
+                    <div class="farm-stat">
+                        <span class="dot dot-offline"></span>
+                        <span style="color:var(--text-tertiary)">${total - online}</span>
+                    </div>
+                </div>
+                <div class="farm-controls" onclick="event.stopPropagation()">
+                    <button class="farm-btn start" onclick="startFarm(${a})" title="Start farm">▶</button>
+                    <button class="farm-btn stop" onclick="stopFarm(${a})" title="Stop farm">■</button>
+                    <button class="farm-btn check" onclick="checkFarm(${a})" title="Check farm">✓</button>
+                </div>
+                <svg class="farm-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="farm-body">
+                <div class="farm-toolbar">
+                    <div class="session-filters" onclick="event.stopPropagation()">
+                        <button class="filter-btn${currentFilter === 'all' ? ' active' : ''}" data-filter="all" onclick="filterSessions('all')">All <span class="filter-count">${total}</span></button>
+                        <button class="filter-btn${currentFilter === 'connected' ? ' active' : ''}" data-filter="connected" onclick="filterSessions('connected')">Connected <span class="filter-count">${online}</span></button>
+                        <button class="filter-btn${currentFilter === 'stopped' ? ' active' : ''}" data-filter="stopped" onclick="filterSessions('stopped')">Stopped <span class="filter-count">${total - online}</span></button>
+                    </div>
+                </div>
+                <div class="farm-sessions-grid">
+                    ${filtered.length > 0 
+                        ? filtered.map(function(s) { return renderSessionCard(s); }).join('')
+                        : '<div class="empty-state" style="padding:20px;grid-column:1/-1"><p>Không có session nào ' + (currentFilter !== 'all' ? '(' + currentFilter + ')' : '') + '</p></div>'
+                    }
+                </div>
+            </div>
+        </div>`;
+
+        offset += maxSess;
+    }
+
+    container.innerHTML = html;
+}
+
+function toggleFarm(idx) {
+    var card = document.querySelector('.farm-card[data-farm="' + idx + '"]');
+    if (card) card.classList.toggle('collapsed');
+}
+
+async function startFarm(idx) {
+    showToast('🚀 Đang khởi động farm ' + (idx + 1) + '...', 'info');
+    try { await fetch('/api/farm/' + idx + '/start', { method: 'POST' }); } catch(e) {}
+}
+
+async function stopFarm(idx) {
+    showToast('⏹ Đang dừng farm ' + (idx + 1) + '...', 'info');
+    try { await fetch('/api/farm/' + idx + '/stop', { method: 'POST' }); } catch(e) {}
+}
+
+async function checkFarm(idx) {
+    showToast('🔍 Đang kiểm tra farm ' + (idx + 1) + '...', 'info');
+    try {
+        var res = await fetch('/api/farm/' + idx + '/check');
+        var data = await res.json();
+        if (data.results) {
+            data.results.forEach(function(r) {
+                checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+            });
+        }
+        showToast('Farm ' + (idx + 1) + ': ' + data.passed + '/' + data.total + ' OK', data.passed === data.total ? 'success' : 'warning');
+        renderFarms(sessionsData);
+    } catch(e) {}
+}
+
+// Keep renderSessions as alias for backward compat
+function renderSessions(sessions) {
+    renderFarms(sessions);
 }
 
 // Update a single session card in-place without re-rendering the whole grid
@@ -388,20 +585,80 @@ function filterSessions(filter) {
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.filter === filter);
     });
-    renderSessions(sessionsData);
+    renderFarms(sessionsData);
+}
+
+function formatUptime(seconds) {
+    var d = Math.floor(seconds / 86400);
+    var h = Math.floor((seconds % 86400) / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0';
+    var gb = bytes / (1024 * 1024 * 1024);
+    if (gb >= 1) return gb.toFixed(1) + 'G';
+    var mb = bytes / (1024 * 1024);
+    return mb.toFixed(0) + 'M';
 }
 
 function updateStats(stats) {
+    // PPPoE & Proxy counts
     document.getElementById('statPppd').textContent = stats.pppdCount || '0';
     document.getElementById('statProxy').textContent = stats.proxyCount || '0';
-    document.getElementById('statLoad').textContent = (stats.loadAvg?.[0] || 0).toFixed(1);
+
+    // Uptime
+    var uptimeEl = document.getElementById('statUptime');
+    if (uptimeEl && stats.uptime) {
+        uptimeEl.textContent = formatUptime(stats.uptime);
+    }
+
+    // CPU
+    var cpuPercent = stats.cpuPercent || 0;
+    var cpuEl = document.getElementById('statCpu');
+    var cpuBar = document.getElementById('statCpuBar');
+    if (cpuEl) cpuEl.textContent = cpuPercent.toFixed(0) + '%';
+    if (cpuBar) {
+        cpuBar.style.width = Math.min(100, cpuPercent) + '%';
+        cpuBar.className = 'sys-bar sys-bar-cpu';
+        if (cpuPercent > 80) cpuBar.classList.add('critical');
+        else if (cpuPercent > 50) cpuBar.classList.add('high');
+    }
+
+    // RAM
+    var totalMem = stats.totalMem || 1;
+    var freeMem = stats.freeMem || 0;
+    var usedMem = totalMem - freeMem;
+    var ramPercent = Math.round((usedMem / totalMem) * 100);
+    var ramEl = document.getElementById('statRam');
+    var ramBar = document.getElementById('statRamBar');
+    if (ramEl) ramEl.textContent = ramPercent + '%';
+    if (ramBar) {
+        ramBar.style.width = ramPercent + '%';
+        ramBar.className = 'sys-bar sys-bar-ram';
+        if (ramPercent > 85) ramBar.classList.add('high');
+    }
+
+    // Disk
+    var diskPercent = stats.diskPercent || 0;
+    var diskEl = document.getElementById('statDisk');
+    var diskBar = document.getElementById('statDiskBar');
+    if (diskEl) diskEl.textContent = diskPercent + '%';
+    if (diskBar) {
+        diskBar.style.width = diskPercent + '%';
+        diskBar.className = 'sys-bar sys-bar-disk';
+        if (diskPercent > 85) diskBar.classList.add('high');
+    }
 }
 
 // ============ ACTIONS ============
 
 async function runInstall() {
-    const btn = document.getElementById('btnInstall');
-    btn.classList.add('loading');
+    var btn = document.getElementById('btnSaveInstall');
+    if (btn) btn.classList.add('loading');
     showToast('🔧 Đang cài đặt cấu hình...', 'info');
     appendTerminal('\n--- INSTALL STARTED ---\n', 'system');
 
@@ -409,8 +666,48 @@ async function runInstall() {
         await fetch('/api/install', { method: 'POST' });
     } catch (e) {
         showToast('Lỗi: ' + e.message, 'error');
-        btn.classList.remove('loading');
+        if (btn) btn.classList.remove('loading');
     }
+}
+
+// ============ CONFIRM DIALOG ============
+
+function showConfirm(icon, title, message, okClass, onConfirm) {
+    document.getElementById('confirmIcon').textContent = icon;
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMessage').textContent = message;
+    var okBtn = document.getElementById('confirmOkBtn');
+    okBtn.className = 'confirm-btn confirm-btn-ok';
+    if (okClass) okBtn.classList.add(okClass);
+    okBtn.onclick = function() {
+        closeConfirm();
+        onConfirm();
+    };
+    document.getElementById('confirmOverlay').classList.add('active');
+}
+
+function closeConfirm() {
+    document.getElementById('confirmOverlay').classList.remove('active');
+}
+
+function confirmStartAll() {
+    showConfirm(
+        '🚀',
+        'Khởi động tất cả?',
+        'Sẽ khởi động tất cả sessions PPPoE + 3proxy. Bạn có chắc chắn?',
+        'start',
+        startAll
+    );
+}
+
+function confirmStopAll() {
+    showConfirm(
+        '⛔',
+        'Dừng tất cả sessions?',
+        'Thao tác này sẽ ngắt kết nối tất cả PPPoE sessions và dừng proxy. Bạn có chắc chắn?',
+        'danger',
+        stopAll
+    );
 }
 
 async function startAll() {
@@ -560,7 +857,8 @@ socket.on('install_log', (data) => {
 });
 
 socket.on('install_complete', (data) => {
-    document.getElementById('btnInstall').classList.remove('loading');
+    var ib = document.getElementById('btnSaveInstall');
+    if (ib) ib.classList.remove('loading');
     if (data.code === 0) {
         showToast('✅ Cài đặt hoàn tất!', 'success');
         appendTerminal('\n--- INSTALL COMPLETE ✅ ---\n', 'success');
@@ -653,7 +951,9 @@ socket.on('check_complete', (data) => {
 });
 
 socket.on('refresh', () => {
-    setTimeout(refreshStatus, 1000);
+    fetchConfigForFarms().then(() => {
+        setTimeout(refreshStatus, 1000);
+    });
 });
 
 // ============ ROTATION QUEUE ============
@@ -663,18 +963,34 @@ socket.on('rotation_queue_update', (data) => {
 });
 
 function renderRotationQueue(entries) {
-    var section = document.getElementById('rotationQueueSection');
     var tbody = document.getElementById('rotationQueueBody');
     var countEl = document.getElementById('queueCount');
+    var emptyState = document.getElementById('queueEmptyState');
+    var tableWrap = document.getElementById('queueTableWrap');
+    var tabBadge = document.getElementById('tabQueueBadge');
+    var bnBadge = document.getElementById('bnQueueBadge');
+
+    var count = (entries && entries.length) || 0;
+    countEl.textContent = count;
+
+    // Update tab badges
+    if (tabBadge) {
+        tabBadge.textContent = count;
+        tabBadge.style.display = count > 0 ? '' : 'none';
+    }
+    if (bnBadge) {
+        bnBadge.textContent = count;
+        bnBadge.style.display = count > 0 ? '' : 'none';
+    }
 
     if (!entries || entries.length === 0) {
-        section.style.display = 'none';
-        countEl.textContent = '0';
+        emptyState.style.display = '';
+        tableWrap.style.display = 'none';
         return;
     }
 
-    section.style.display = '';
-    countEl.textContent = entries.length;
+    emptyState.style.display = 'none';
+    tableWrap.style.display = '';
 
     tbody.innerHTML = entries.map(function(e) {
         var statusClass = 'queue-status-' + e.status.replace('_', '-');
@@ -757,19 +1073,19 @@ function renderBlacklist(domains) {
     var status = document.getElementById('blacklistStatus');
 
     if (!domains || domains.length === 0) {
-        list.innerHTML = '<div class="blacklist-empty">Chưa có domain nào bị chặn</div>';
+        list.innerHTML = '<div class="bl-empty"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Chưa có domain nào</div>';
         actions.style.display = 'none';
         status.textContent = '';
         return;
     }
 
     actions.style.display = '';
-    status.textContent = domains.length + ' domain đang bị chặn';
+    status.textContent = domains.length;
 
     list.innerHTML = domains.map(function(d) {
-        return '<div class="blacklist-item">' +
-            '<span class="blacklist-domain">' + escapeHtml(d) + '</span>' +
-            '<button class="blacklist-remove" onclick="removeBlacklistDomain(\'' + escapeHtml(d) + '\')" title="Xóa">✕</button>' +
+        return '<div class="bl-tag">' +
+            '<span class="bl-domain">' + escapeHtml(d) + '</span>' +
+            '<button class="bl-remove" onclick="removeBlacklistDomain(\'' + escapeHtml(d) + '\')" title="Xóa">✕</button>' +
             '</div>';
     }).join('');
 }
@@ -826,6 +1142,93 @@ async function clearBlacklist() {
         var data = await res.json();
         renderBlacklist(data.domains);
         showToast('✅ Đã xóa tất cả blacklist', 'success');
+    } catch (e) {
+        showToast('❌ Lỗi', 'error');
+    }
+}
+
+// ============ IP LIST ============
+
+var ipListData = [];
+
+async function loadIPListUI() {
+    try {
+        var res = await fetch('/api/iplist');
+        var data = await res.json();
+        ipListData = data.entries || [];
+        renderIPList(ipListData);
+    } catch (e) { /* ignore */ }
+}
+
+function renderIPList(entries) {
+    var content = document.getElementById('iplistContent');
+    var actions = document.getElementById('iplistActions');
+    var countEl = document.getElementById('iplistCount');
+
+    if (!entries || entries.length === 0) {
+        content.innerHTML = '<div class="iplist-empty"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Chưa có IP nào</div>';
+        actions.style.display = 'none';
+        countEl.textContent = '';
+        return;
+    }
+
+    actions.style.display = '';
+    countEl.textContent = entries.length;
+
+    // Show entries in reverse (newest first), display IP and time
+    var reversed = entries.slice().reverse();
+    var html = '<div class="iplist-items">';
+    reversed.forEach(function(entry) {
+        var timeStr = '';
+        if (entry.timestamp) {
+            var d = new Date(entry.timestamp);
+            timeStr = d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+        }
+        html += '<div class="iplist-row">' +
+            '<span class="iplist-ip">' + escapeHtml(entry.ip) + '</span>' +
+            '<span class="iplist-time">' + timeStr + '</span>' +
+            '</div>';
+    });
+    html += '</div>';
+    content.innerHTML = html;
+}
+
+async function copyIPList() {
+    if (!ipListData || ipListData.length === 0) {
+        showToast('Danh sách IP trống', 'warning');
+        return;
+    }
+    // Unique IPs only
+    var uniqueIPs = [];
+    ipListData.forEach(function(e) {
+        if (uniqueIPs.indexOf(e.ip) === -1) uniqueIPs.push(e.ip);
+    });
+    var text = uniqueIPs.join('\n');
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast('📋 Đã copy ' + uniqueIPs.length + ' IP (unique)', 'success');
+    } catch (e) {
+        // Fallback
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('📋 Đã copy ' + uniqueIPs.length + ' IP (unique)', 'success');
+    }
+}
+
+async function clearIPList() {
+    if (!confirm('Xóa tất cả IP trong danh sách?')) return;
+    try {
+        await fetch('/api/iplist', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        ipListData = [];
+        renderIPList([]);
+        showToast('✅ Đã xóa tất cả IP', 'success');
     } catch (e) {
         showToast('❌ Lỗi', 'error');
     }

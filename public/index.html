@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nest PPPoE Manager</title>
     <meta name="description" content="PPPoE Session Manager with Proxy Control">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -36,19 +39,70 @@
                 </div>
             </div>
         </div>
+        <div class="header-center">
+            <div class="header-actions">
+                <button class="header-btn header-btn-start" onclick="confirmStartAll()" id="btnStartAll" title="Start All">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <span class="header-btn-label">Start All</span>
+                </button>
+                <button class="header-btn header-btn-stop" onclick="confirmStopAll()" id="btnStopAll" title="Stop All">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    <span class="header-btn-label">Stop All</span>
+                </button>
+                <button class="header-btn header-btn-refresh" onclick="refreshStatus()" id="btnRefresh" title="Refresh">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    <span class="header-btn-label">Refresh</span>
+                </button>
+                <button class="header-btn header-btn-check" onclick="checkAll()" id="btnCheckAll" title="Check All">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    <span class="header-btn-label">Check All</span>
+                </button>
+                <div class="auto-start-toggle" id="autoStartToggle" title="Auto Start on boot">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoStartCheckbox" onchange="toggleAutoStart(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label">Auto</span>
+                </div>
+            </div>
+        </div>
         <div class="header-right">
-            <div class="stat-pills" id="headerStats">
-                <div class="stat-pill">
-                    <span class="stat-dot dot-green"></span>
-                    <span>PPPoE: <strong id="statPppd">0</strong></span>
+            <div class="sys-stats" id="headerStats">
+                <div class="sys-stat" title="Uptime">
+                    <span class="sys-icon">⏱</span>
+                    <span class="sys-val" id="statUptime">--</span>
                 </div>
-                <div class="stat-pill">
-                    <span class="stat-dot dot-blue"></span>
-                    <span>Proxy: <strong id="statProxy">0</strong></span>
+                <div class="sys-stat" title="CPU Usage">
+                    <span class="sys-icon">⚡</span>
+                    <div class="sys-bar-wrap">
+                        <div class="sys-bar sys-bar-cpu" id="statCpuBar" style="width:0%"></div>
+                    </div>
+                    <span class="sys-val" id="statCpu">0%</span>
                 </div>
-                <div class="stat-pill">
-                    <span class="stat-dot dot-purple"></span>
-                    <span>Load: <strong id="statLoad">0</strong></span>
+                <div class="sys-stat" title="RAM Usage">
+                    <span class="sys-icon">🧠</span>
+                    <div class="sys-bar-wrap">
+                        <div class="sys-bar sys-bar-ram" id="statRamBar" style="width:0%"></div>
+                    </div>
+                    <span class="sys-val" id="statRam">0%</span>
+                </div>
+                <div class="sys-stat" title="Disk Usage">
+                    <span class="sys-icon">💾</span>
+                    <div class="sys-bar-wrap">
+                        <div class="sys-bar sys-bar-disk" id="statDiskBar" style="width:0%"></div>
+                    </div>
+                    <span class="sys-val" id="statDisk">0%</span>
+                </div>
+                <div class="sys-divider"></div>
+                <div class="sys-stat" title="PPPoE Sessions">
+                    <span class="sys-dot dot-green"></span>
+                    <span class="sys-label">PPPoE</span>
+                    <strong class="sys-val" id="statPppd">0</strong>
+                </div>
+                <div class="sys-stat" title="3proxy Instances">
+                    <span class="sys-dot dot-blue"></span>
+                    <span class="sys-label">Proxy</span>
+                    <strong class="sys-val" id="statProxy">0</strong>
                 </div>
             </div>
             <div class="device-badge" id="deviceBadge">
@@ -66,108 +120,48 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
                 Dashboard
             </button>
-            <button class="tab" data-tab="config" id="tabConfig">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                Cài đặt
+            <button class="tab" data-tab="rotation" id="tabRotation">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Rotation
+                <span class="tab-badge" id="tabQueueBadge" style="display:none">0</span>
             </button>
             <button class="tab" data-tab="terminal" id="tabTerminal">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                Terminal
+                Logs
             </button>
             <button class="tab" data-tab="console" id="tabConsole">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8l4 4-4 4"/><line x1="12" y1="16" x2="18" y2="16"/></svg>
                 Console
             </button>
-            <button class="tab" data-tab="blacklist" id="tabBlacklist">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
-                Blacklist
+            <button class="tab" data-tab="config" id="tabConfig">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Cài đặt
             </button>
         </nav>
 
         <!-- Dashboard Tab -->
         <section class="tab-content active" id="dashboardTab">
-            <!-- Control Panel -->
-            <div class="control-panel">
-                <div class="control-row">
-                    <div class="control-group">
-                        <h3>🎛️ Điều khiển toàn bộ</h3>
-                        <p>Quản lý tất cả phiên PPPoE + 3proxy</p>
-                    </div>
-                    <div class="control-actions">
-                        <button class="btn btn-install" onclick="runInstall()" id="btnInstall">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            Install
-                        </button>
-                        <button class="btn btn-start" onclick="startAll()" id="btnStartAll">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Start All
-                        </button>
-                        <button class="btn btn-stop" onclick="stopAll()" id="btnStopAll">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                            Stop All
-                        </button>
-                        <button class="btn btn-secondary" onclick="refreshStatus()" id="btnRefresh">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                            Refresh
-                        </button>
-                        <button class="btn btn-check-all" onclick="checkAll()" id="btnCheckAll">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                            Check All
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Network Interfaces -->
-            <div class="section">
-                <div class="section-header" onclick="toggleSection('nicsSection')">
-                    <h2>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
-                        Network Interfaces
-                    </h2>
-                    <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="section-body" id="nicsSection">
-                    <div class="nic-grid" id="nicGrid">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sessions Overview -->
-            <div class="section">
-                <div class="section-header">
-                    <h2>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                        PPPoE Sessions
-                    </h2>
-                    <div class="session-filters">
-                        <button class="filter-btn active" data-filter="all" onclick="filterSessions('all')">All</button>
-                        <button class="filter-btn" data-filter="connected" onclick="filterSessions('connected')">Connected</button>
-                        <button class="filter-btn" data-filter="stopped" onclick="filterSessions('stopped')">Stopped</button>
-                    </div>
-                </div>
-                <div class="sessions-grid" id="sessionsGrid">
-                    <!-- Populated by JS -->
-                </div>
-            </div>
+            <!-- Farm groups rendered by JS -->
+            <div id="farmsContainer"></div>
         </section>
 
-        <!-- Rotation Queue -->
-        <section class="section rotation-queue-section" id="rotationQueueSection" style="display:none">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                    Rotation Queue
+        <!-- Rotation Tab -->
+        <section class="tab-content" id="rotationTab">
+            <div class="rotation-tab-header">
+                <div class="rotation-tab-title">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    <h2>Rotation Queue</h2>
                     <span class="queue-count" id="queueCount">0</span>
-                </h2>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); clearRotationQueue()">Clear All</button>
-                    <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                 </div>
+                <button class="btn btn-sm btn-ghost" onclick="clearRotationQueue()">Clear All</button>
             </div>
-            <div class="section-body">
-                <div class="queue-table-wrap">
+            <div class="rotation-tab-body" id="rotationTabBody">
+                <div class="queue-empty-state" id="queueEmptyState">
+                    <div class="queue-empty-icon">🔄</div>
+                    <h3>Không có rotation nào</h3>
+                    <p>Khi bạn xoay IP, các rotation sẽ xuất hiện ở đây.</p>
+                </div>
+                <div class="queue-table-wrap" id="queueTableWrap" style="display:none">
                     <table class="queue-table" id="rotationQueueTable">
                         <thead>
                             <tr>
@@ -195,7 +189,7 @@
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         Cấu hình PPPoE
                     </h2>
-                    <p>Nhập thông tin tài khoản PPPoE. Mỗi account sẽ tạo 30 phiên kết nối.</p>
+                    <p>Nhập thông tin tài khoản PPPoE. Mỗi account = 1 farm proxy.</p>
                 </div>
 
                 <!-- Device Code -->
@@ -218,25 +212,6 @@
                     </div>
                 </div>
 
-                <!-- Import JSON -->
-                <div class="config-section">
-                    <label class="config-label">Nhập cấu hình JSON</label>
-                    <textarea class="config-textarea" id="configJson" rows="8" placeholder='Dán JSON config vào đây...
-{
-    "device_code": "DNG_001",
-    "pppoe": [
-        {
-            "username": "dng_gftth_nestgroupctt0",
-            "password": "4EB9Y8"
-        }
-    ]
-}'></textarea>
-                    <button class="btn btn-secondary btn-sm" onclick="importConfig()" style="margin-top:8px">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                        Import
-                    </button>
-                </div>
-
                 <!-- Actions -->
                 <div class="config-actions">
                     <button class="btn btn-primary" onclick="saveConfig()" id="btnSaveConfig">
@@ -247,6 +222,55 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Lưu & Install
                     </button>
+                </div>
+
+            </div>
+
+            <!-- Domain Blacklist Card -->
+            <div class="bl-card">
+                <div class="bl-header">
+                    <div class="bl-title">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+                        <span>Domain Blacklist</span>
+                        <span class="bl-count" id="blacklistStatus"></span>
+                    </div>
+                    <div class="bl-header-actions" id="blacklistActions" style="display:none">
+                        <button class="btn btn-sm btn-danger" onclick="clearBlacklist()">Xóa tất cả</button>
+                    </div>
+                </div>
+                <div class="bl-body">
+                    <div class="bl-input-row">
+                        <input type="text" id="blacklistInput" class="bl-input" placeholder="facebook.com, tiktok.com, ..." />
+                        <button class="bl-add-btn" onclick="addBlacklistDomain()" id="btnAddBlacklist" title="Thêm domain">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        </button>
+                    </div>
+                    <div class="bl-list" id="blacklistList">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- IP List Card -->
+            <div class="iplist-card">
+                <div class="iplist-header">
+                    <div class="iplist-title">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        <span>IP List</span>
+                        <span class="iplist-count" id="iplistCount"></span>
+                    </div>
+                    <div class="iplist-header-actions" id="iplistActions" style="display:none">
+                        <button class="btn btn-sm btn-copy" onclick="copyIPList()" id="btnCopyIPList">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            Copy
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="clearIPList()">Xóa tất cả</button>
+                    </div>
+                </div>
+                <div class="iplist-body">
+                    <div class="iplist-content" id="iplistContent">
+                        <!-- Populated by JS -->
+                    </div>
                 </div>
             </div>
         </section>
@@ -260,7 +284,7 @@
                         <span class="dot-yellow"></span>
                         <span class="dot-green2"></span>
                     </div>
-                    <span class="terminal-title">Terminal Output</span>
+                    <span class="terminal-title">Logs</span>
                     <button class="btn btn-sm btn-ghost" onclick="clearTerminal()">Clear</button>
                 </div>
                 <pre class="terminal-body" id="terminalOutput"><span class="term-system">Nest PPPoE Manager v1.0</span>
@@ -284,42 +308,32 @@
                 <div id="consoleContainer" class="console-container"></div>
             </div>
         </section>
-
-        <!-- Blacklist Tab -->
-        <section class="tab-content" id="blacklistTab">
-            <div class="config-panel">
-                <div class="config-header">
-                    <h2>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
-                        Domain Blacklist
-                    </h2>
-                    <p>Chặn truy cập đến các domain này qua tất cả proxy. Thay đổi sẽ tự động áp dụng ngay.</p>
-                </div>
-
-                <div class="blacklist-input-row">
-                    <input type="text" id="blacklistInput" class="input" placeholder="Nhập domain (vd: facebook.com, tiktok.com)" />
-                    <button class="btn btn-primary" onclick="addBlacklistDomain()" id="btnAddBlacklist">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                        Thêm
-                    </button>
-                </div>
-                <div class="blacklist-hint">Có thể nhập nhiều domain cách nhau bởi dấu phẩy hoặc xuống dòng</div>
-
-                <div class="blacklist-status" id="blacklistStatus"></div>
-
-                <div class="blacklist-list" id="blacklistList">
-                    <!-- Populated by JS -->
-                </div>
-
-                <div class="blacklist-actions" id="blacklistActions" style="display:none">
-                    <button class="btn btn-sm btn-danger" onclick="clearBlacklist()">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        Xóa tất cả
-                    </button>
-                </div>
-            </div>
-        </section>
     </main>
+
+    <!-- Bottom Navigation (Mobile) -->
+    <nav class="bottom-nav" id="bottomNav">
+        <button class="bottom-nav-item active" data-tab="dashboard" id="bnDashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Dashboard</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="rotation" id="bnRotation">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span>Rotation</span>
+            <span class="bn-badge" id="bnQueueBadge" style="display:none">0</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="terminal" id="bnTerminal">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Logs</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="console" id="bnConsole">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8l4 4-4 4"/><line x1="12" y1="16" x2="18" y2="16"/></svg>
+            <span>Console</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="config" id="bnConfig">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Cài đặt</span>
+        </button>
+    </nav>
 
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
@@ -332,6 +346,19 @@
                 <button class="modal-close" onclick="closeModal()">×</button>
             </div>
             <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm-dialog">
+            <div class="confirm-icon" id="confirmIcon">⚠️</div>
+            <h3 class="confirm-title" id="confirmTitle">Xác nhận</h3>
+            <p class="confirm-message" id="confirmMessage">Bạn có chắc chắn muốn thực hiện?</p>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-btn-cancel" onclick="closeConfirm()">Huỷ bỏ</button>
+                <button class="confirm-btn confirm-btn-ok" id="confirmOkBtn" onclick="closeConfirm()">Xác nhận</button>
+            </div>
         </div>
     </div>
 
