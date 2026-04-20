@@ -137,38 +137,77 @@ async function initApp() {
 
 // ============ TAB NAVIGATION ============
 
+// Tabs that live inside the "More" menu on mobile
+var moreMenuTabs = ['terminal', 'console', 'config'];
+
 function setupTabs() {
-    function switchTab(target) {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
-
-        // Activate top tab
-        var topTab = document.querySelector('.tab[data-tab="' + target + '"]');
-        if (topTab) topTab.classList.add('active');
-
-        // Activate bottom nav item
-        var bnItem = document.querySelector('.bottom-nav-item[data-tab="' + target + '"]');
-        if (bnItem) bnItem.classList.add('active');
-
-        // Activate content
-        var content = document.getElementById(target + 'Tab');
-        if (content) content.classList.add('active');
-    }
-
-    // Top tabs
+    // Top tabs (desktop)
     document.querySelectorAll('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
             switchTab(tab.dataset.tab);
         });
     });
 
-    // Bottom nav items
-    document.querySelectorAll('.bottom-nav-item').forEach(item => {
+    // Bottom nav items (mobile) - only items with data-tab
+    document.querySelectorAll('.bottom-nav-item[data-tab]').forEach(item => {
         item.addEventListener('click', () => {
             switchTab(item.dataset.tab);
         });
     });
+}
+
+function switchTab(target) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.more-menu-item').forEach(m => m.classList.remove('active'));
+
+    // Activate top tab
+    var topTab = document.querySelector('.tab[data-tab="' + target + '"]');
+    if (topTab) topTab.classList.add('active');
+
+    // Activate bottom nav item or "More" button
+    var bnItem = document.querySelector('.bottom-nav-item[data-tab="' + target + '"]');
+    if (bnItem) {
+        bnItem.classList.add('active');
+    } else if (moreMenuTabs.indexOf(target) !== -1) {
+        // It's a "More" sub-tab — highlight the More button
+        var moreBtn = document.getElementById('bnMore');
+        if (moreBtn) moreBtn.classList.add('active');
+        // Also highlight the item in the more menu
+        var moreItem = document.querySelector('.more-menu-item[data-tab="' + target + '"]');
+        if (moreItem) moreItem.classList.add('active');
+    }
+
+    // Activate content
+    var content = document.getElementById(target + 'Tab');
+    if (content) content.classList.add('active');
+}
+
+// More menu (mobile)
+function toggleMoreMenu(e) {
+    if (e) e.stopPropagation();
+    var menu = document.getElementById('moreMenu');
+    var overlay = document.getElementById('moreMenuOverlay');
+    var isOpen = menu.classList.contains('active');
+    if (isOpen) {
+        closeMoreMenu();
+    } else {
+        menu.classList.add('active');
+        overlay.classList.add('active');
+    }
+}
+
+function closeMoreMenu() {
+    var menu = document.getElementById('moreMenu');
+    var overlay = document.getElementById('moreMenuOverlay');
+    menu.classList.remove('active');
+    overlay.classList.remove('active');
+}
+
+function switchFromMore(tab) {
+    closeMoreMenu();
+    switchTab(tab);
 }
 
 // ============ CONFIG ============
@@ -1373,10 +1412,10 @@ socket.on('rotation_queue_update', (data) => {
 });
 
 function renderRotationQueue(entries) {
-    var tbody = document.getElementById('rotationQueueBody');
+    var container = document.getElementById('rotationQueueBody');
     var countEl = document.getElementById('queueCount');
     var emptyState = document.getElementById('queueEmptyState');
-    var tableWrap = document.getElementById('queueTableWrap');
+    var gridWrap = document.getElementById('queueTableWrap');
     var tabBadge = document.getElementById('tabQueueBadge');
     var bnBadge = document.getElementById('bnQueueBadge');
 
@@ -1395,14 +1434,14 @@ function renderRotationQueue(entries) {
 
     if (!entries || entries.length === 0) {
         emptyState.style.display = '';
-        tableWrap.style.display = 'none';
+        gridWrap.style.display = 'none';
         return;
     }
 
     emptyState.style.display = 'none';
-    tableWrap.style.display = '';
+    gridWrap.style.display = '';
 
-    tbody.innerHTML = entries.map(function(e) {
+    container.innerHTML = entries.map(function(e) {
         var statusClass = 'queue-status-' + e.status.replace('_', '-');
         var statusText = {
             'queued': '⏳ Đang chờ',
@@ -1425,15 +1464,28 @@ function renderRotationQueue(entries) {
             nextRetry = ' (' + remaining + 's)';
         }
 
-        return '<tr class="' + statusClass + '">' +
-            '<td><strong>' + e.iface + '</strong></td>' +
-            '<td class="mono">' + (e.oldIp || '---') + '</td>' +
-            '<td class="mono">' + (e.newIp || '---') + '</td>' +
-            '<td><span class="queue-badge ' + statusClass + '">' + statusText + nextRetry + '</span></td>' +
-            '<td>' + e.attempts + '</td>' +
-            '<td>' + elapsed + '</td>' +
-            '<td><button class="btn btn-sm btn-ghost" onclick="removeFromQueue(' + e.id + ')" title="Huỷ">✕</button></td>' +
-            '</tr>';
+        return '<div class="queue-card ' + statusClass + '">' +
+            '<div class="queue-card-top">' +
+                '<span class="queue-card-session">' + e.iface + '</span>' +
+                '<span class="queue-badge ' + statusClass + '">' + statusText + nextRetry + '</span>' +
+            '</div>' +
+            '<div class="queue-card-ips">' +
+                '<div class="queue-card-ip">' +
+                    '<span class="queue-card-label">IP Cũ</span>' +
+                    '<span class="queue-card-val">' + (e.oldIp || '---') + '</span>' +
+                '</div>' +
+                '<svg class="queue-card-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><polyline points="12 5 19 12 12 19"/></svg>' +
+                '<div class="queue-card-ip">' +
+                    '<span class="queue-card-label">IP Mới</span>' +
+                    '<span class="queue-card-val ' + (e.newIp ? 'new-ip' : '') + '">' + (e.newIp || '---') + '</span>' +
+                '</div>' +
+            '</div>' +
+            '<div class="queue-card-bottom">' +
+                '<span class="queue-card-meta">Lần thử: <strong>' + e.attempts + '</strong></span>' +
+                '<span class="queue-card-meta">' + elapsed + '</span>' +
+                '<button class="queue-card-remove" onclick="removeFromQueue(' + e.id + ')" title="Huỷ">✕</button>' +
+            '</div>' +
+        '</div>';
     }).join('');
 }
 
@@ -1827,26 +1879,20 @@ function reconnectConsole() {
     }
 }
 
-// Override setupTabs to handle console initialization and fit
+// Hook into switchTab to handle console initialization and fit
 (function() {
-    var origSetupTabs = setupTabs;
-    setupTabs = function() {
-        origSetupTabs();
-        // Re-attach tab click handlers with console logic
-        document.querySelectorAll('.tab').forEach(function(tab) {
-            tab.addEventListener('click', function() {
-                if (tab.dataset.tab === 'console') {
-                    // Init on first open or fit on subsequent opens
-                    setTimeout(function() {
-                        if (!consoleInitialized) {
-                            initConsole();
-                        } else if (xtermFit) {
-                            xtermFit.fit();
-                            xterm.focus();
-                        }
-                    }, 50);
+    var origSwitchTab = switchTab;
+    switchTab = function(target) {
+        origSwitchTab(target);
+        if (target === 'console') {
+            setTimeout(function() {
+                if (!consoleInitialized) {
+                    initConsole();
+                } else if (xtermFit) {
+                    xtermFit.fit();
+                    xterm.focus();
                 }
-            });
-        });
+            }, 50);
+        }
     };
 })();
