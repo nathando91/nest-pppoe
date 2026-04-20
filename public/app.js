@@ -126,6 +126,7 @@ async function initApp() {
     loadRotationQueue();
     loadBlacklistUI();
     loadIPListUI();
+    loadInstallStatus();
     setupTabs();
     renderOverview(null);
 
@@ -987,16 +988,89 @@ function renderOverviewFarms() {
     return html;
 }
 
-// ============ ACTIONS ============
+// ============ INSTALL STATUS ============
+
+async function loadInstallStatus() {
+    try {
+        var res = await fetch('/api/install-status');
+        var data = await res.json();
+        renderInstallStatus(data);
+    } catch (e) {
+        console.error('Install status error:', e);
+    }
+}
+
+function renderInstallStatus(data) {
+    var badge = document.getElementById('installBadge');
+    var badgeIcon = document.getElementById('installBadgeIcon');
+    var badgeText = document.getElementById('installBadgeText');
+    var details = document.getElementById('installDetails');
+    if (!badge || !details) return;
+
+    if (data.installed) {
+        badge.className = 'install-status-badge installed';
+        badgeIcon.textContent = '✅';
+        badgeText.textContent = 'Đã cài đặt (' + data.total + ' sessions)';
+    } else {
+        badge.className = 'install-status-badge not-installed';
+        badgeIcon.textContent = '⚠️';
+        badgeText.textContent = 'Chưa cài đặt đầy đủ';
+    }
+
+    var items = [
+        { label: 'Peer files', count: data.peers.count, total: data.peers.total, icon: '📄' },
+        { label: 'Macvlan', count: data.macvlan.count, total: data.macvlan.total, icon: '🔗' },
+        { label: '3proxy configs', count: data.proxyConfigs.count, total: data.proxyConfigs.total, icon: '⚙️' },
+        { label: 'Credentials', count: data.credentials ? 1 : 0, total: 1, icon: '🔑' }
+    ];
+
+    var html = '<div class="install-status-grid">';
+    items.forEach(function(item) {
+        var ok = item.count === item.total;
+        html += '<div class="install-item ' + (ok ? 'ok' : 'missing') + '">' +
+            '<span class="install-item-icon">' + item.icon + '</span>' +
+            '<span class="install-item-label">' + item.label + '</span>' +
+            '<span class="install-item-val">' + item.count + '/' + item.total + '</span>' +
+            '</div>';
+    });
+    html += '</div>';
+    details.innerHTML = html;
+}
+
+function confirmInstall() {
+    showConfirm('🔧', 'Install cấu hình', 'Tạo peer files, macvlan interfaces, 3proxy configs cho tất cả sessions?', 'confirm-btn-green', function() {
+        runInstall();
+    });
+}
+
+function confirmUninstall() {
+    showConfirm('🗑️', 'Xoá cấu hình hệ thống', 'Xoá tất cả peer files, macvlan interfaces, 3proxy configs và credentials?', '', function() {
+        runUninstall();
+    });
+}
 
 async function runInstall() {
-    var btn = document.getElementById('btnSaveInstall');
+    var btn = document.getElementById('btnInstall');
     if (btn) btn.classList.add('loading');
     showToast('🔧 Đang cài đặt cấu hình...', 'info');
     appendTerminal('\n--- INSTALL STARTED ---\n', 'system');
 
     try {
         await fetch('/api/install', { method: 'POST' });
+    } catch (e) {
+        showToast('Lỗi: ' + e.message, 'error');
+        if (btn) btn.classList.remove('loading');
+    }
+}
+
+async function runUninstall() {
+    var btn = document.getElementById('btnUninstall');
+    if (btn) btn.classList.add('loading');
+    showToast('🗑️ Đang xoá cấu hình...', 'info');
+    appendTerminal('\n--- UNINSTALL STARTED ---\n', 'system');
+
+    try {
+        await fetch('/api/uninstall', { method: 'POST' });
     } catch (e) {
         showToast('Lỗi: ' + e.message, 'error');
         if (btn) btn.classList.remove('loading');
@@ -1190,15 +1264,18 @@ socket.on('install_log', (data) => {
 });
 
 socket.on('install_complete', (data) => {
-    var ib = document.getElementById('btnSaveInstall');
+    var ib = document.getElementById('btnInstall');
+    var ub = document.getElementById('btnUninstall');
     if (ib) ib.classList.remove('loading');
+    if (ub) ub.classList.remove('loading');
     if (data.code === 0) {
-        showToast('✅ Cài đặt hoàn tất!', 'success');
-        appendTerminal('\n--- INSTALL COMPLETE ✅ ---\n', 'success');
+        showToast('✅ Hoàn tất!', 'success');
+        appendTerminal('\n--- COMPLETE ✅ ---\n', 'success');
     } else {
-        showToast('❌ Cài đặt thất bại', 'error');
-        appendTerminal('\n--- INSTALL FAILED ❌ ---\n', 'error');
+        showToast('❌ Thất bại', 'error');
+        appendTerminal('\n--- FAILED ❌ ---\n', 'error');
     }
+    loadInstallStatus();
 });
 
 socket.on('start_log', (data) => {

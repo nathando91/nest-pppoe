@@ -166,6 +166,29 @@
                     <p>Nhập thông tin tài khoản PPPoE. Mỗi account = 1 farm proxy.</p>
                 </div>
 
+                <!-- Install Status Card -->
+                <div class="install-status-card" id="installStatusCard">
+                    <div class="install-status-header">
+                        <div class="install-status-badge" id="installBadge">
+                            <span class="install-badge-icon" id="installBadgeIcon">⏳</span>
+                            <span id="installBadgeText">Đang kiểm tra...</span>
+                        </div>
+                        <div class="install-status-actions">
+                            <button class="btn btn-sm btn-install" onclick="confirmInstall()" id="btnInstall">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Install
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="confirmUninstall()" id="btnUninstall">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                Xoá cấu hình
+                            </button>
+                        </div>
+                    </div>
+                    <div class="install-status-details" id="installDetails">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
                 <!-- Device Code -->
                 <div class="config-section">
                     <label class="config-label">Device Code</label>
@@ -175,13 +198,7 @@
                 <!-- Password -->
                 <div class="config-section">
                     <label class="config-label">Mật khẩu đăng nhập</label>
-                    <div class="config-pw-row">
-                        <input type="password" class="config-input" id="configPassword" placeholder="Để trống = không yêu cầu đăng nhập">
-                        <button class="btn btn-sm btn-primary" onclick="savePassword()" id="btnSavePassword">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                            Lưu
-                        </button>
-                    </div>
+                    <input type="password" class="config-input" id="configPassword" placeholder="Để trống = không yêu cầu đăng nhập">
                     <small class="config-hint">Khi đặt mật khẩu, mỗi lần truy cập sẽ yêu cầu đăng nhập</small>
                 </div>
 
@@ -204,10 +221,6 @@
                     <button class="btn btn-primary" onclick="saveConfig()" id="btnSaveConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                         Lưu cấu hình
-                    </button>
-                    <button class="btn btn-install" onclick="saveAndInstall()" id="btnSaveInstall">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Lưu & Install
                     </button>
                 </div>
 
