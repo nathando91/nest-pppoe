@@ -100,8 +100,10 @@ function renderAccounts(accounts) {
                     data-field="username" data-idx="${idx}">
                 <input type="text" class="account-input" placeholder="Password" value="${escapeHtml(acc.password || '')}"
                     data-field="password" data-idx="${idx}">
+                <input type="number" class="account-input account-input-small" placeholder="Sessions" value="${acc.max_session || 30}"
+                    data-field="max_session" data-idx="${idx}" min="1" max="100" title="Số session tối đa">
             </div>
-            <div class="account-info">→ 30 sessions</div>
+            <div class="account-info">→ ${acc.max_session || 30} sessions</div>
             <button class="account-delete" onclick="removeAccount(${idx})" title="Xóa account">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
@@ -111,7 +113,7 @@ function renderAccounts(accounts) {
 
 function addAccount() {
     const accounts = getAccountsFromForm();
-    accounts.push({ username: '', password: '' });
+    accounts.push({ username: '', password: '', max_session: 30 });
     renderAccounts(accounts);
     // Focus new username input
     setTimeout(() => {
@@ -131,7 +133,8 @@ function getAccountsFromForm() {
     document.querySelectorAll('.account-card').forEach(card => {
         const username = card.querySelector('[data-field="username"]').value;
         const password = card.querySelector('[data-field="password"]').value;
-        accounts.push({ username, password });
+        const maxSession = parseInt(card.querySelector('[data-field="max_session"]').value) || 30;
+        accounts.push({ username, password, max_session: maxSession });
     });
     return accounts;
 }

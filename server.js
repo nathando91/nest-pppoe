@@ -49,4 +49,47 @@ server.listen(PORT, '0.0.0.0', function() {
         if (lanIp) console.log('   LAN:   http://' + lanIp + ':' + PORT);
     } catch (err) { /* ignore */ }
     console.log('');
+
+    // Auto-recover: restart 3proxy for active PPPoE sessions
+    recoverProxies();
 });
+
+async function recoverProxies() {
+    var { getTotalSessions, readConfig } = require('./lib/config');
+    var { getSessionIP, setupProxy, sleep } = require('./lib/pppoe');
+
+    var config = readConfig();
+    var total = getTotalSessions(config);
+    var recovered = 0;
+
+    // Check if any 3proxy is already running
+    try {
+        var proxyCount = execSync('pgrep -c 3proxy 2>/dev/null || echo 0', { encoding: 'utf8' }).trim();
+        if (parseInt(proxyCount) > 0) {
+            console.log('✅ 3proxy already running (' + proxyCount + ' processes), skip recovery');
+            return;
+        }
+    } catch (e) { /* ignore */ }
+
+    console.log('🔄 Auto-recovering 3proxy for active sessions...');
+
+    for (var i = 0; i < total; i++) {
+        var iface = 'ppp' + i;
+        var ip = await getSessionIP(iface);
+        if (ip) {
+            try {
+                await setupProxy(i, ip);
+                recovered++;
+            } catch (e) {
+                console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
+            }
+        }
+    }
+
+    if (recovered > 0) {
+        console.log('✅ Recovered 3proxy for ' + recovered + '/' + total + ' sessions');
+        io.emit('refresh');
+    } else {
+        console.log('ℹ️  No active PPPoE sessions to recover');
+    }
+}

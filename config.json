@@ -3,7 +3,8 @@
     "pppoe": [
         {
             "username": "dng_gftth_nestgroupctt0",
-            "password": "4EB9Y8"
+            "password": "4EB9Y8",
+            "max_session": 50
         }
     ]
 }

@@ -1121,7 +1121,7 @@ body {
 .account-fields {
     flex: 1;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr auto;
     gap: 8px;
 }
 
@@ -1134,6 +1134,11 @@ body {
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     transition: all 0.2s;
+}
+
+.account-input-small {
+    width: 70px;
+    text-align: center;
 }
 
 .account-input:focus {
@@ -1377,6 +1382,7 @@ body {
 
     .config-panel { padding: 20px; }
     .account-fields { grid-template-columns: 1fr; }
+    .account-input-small { width: 100%; }
 }
 
 /* ============ EMPTY STATE ============ */
