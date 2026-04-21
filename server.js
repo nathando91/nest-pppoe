@@ -277,12 +277,13 @@ server.listen(PORT, '0.0.0.0', function() {
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
-    var { getSessionIP, setupProxy, connectPppoe, sleep } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, connectPppoe, sleep, isPrivateIP } = require('./lib/pppoe');
 
     var config = readConfig();
     var total = getTotalSessions(config);
     var recovered = 0;
     var downSessions = [];
+    var cgnatSessions = [];
 
     // Check if any 3proxy is already running
     var alreadyRunning = false;
@@ -301,6 +302,12 @@ async function recoverProxies() {
         var iface = 'ppp' + i;
         var ip = await getSessionIP(iface);
         if (ip) {
+            // Skip CGNAT/private IPs — proxy won't work, let health check auto-rotate
+            if (isPrivateIP(ip)) {
+                cgnatSessions.push(i);
+                console.log('   ⚠️ ppp' + i + ' has CGNAT IP (' + ip + '), skipping proxy setup');
+                continue;
+            }
             if (!alreadyRunning) {
                 try {
                     await setupProxy(i, ip);
