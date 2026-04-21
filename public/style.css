@@ -841,7 +841,7 @@ body {
 }
 
 .farm-info {
-    flex: 1;
+    flex: 1 1 0;
     min-width: 0;
 }
 
@@ -903,6 +903,7 @@ body {
     display: flex;
     gap: 6px;
     flex-shrink: 0;
+    margin: 0 auto;
 }
 
 .farm-btn {
@@ -939,6 +940,13 @@ body {
     border: 1px solid rgba(34,211,238,0.15);
 }
 .farm-btn.check:hover { background: rgba(34,211,238,0.2); }
+
+.farm-btn.copy {
+    background: rgba(251,191,36,0.1);
+    color: var(--amber-400);
+    border: 1px solid rgba(251,191,36,0.15);
+}
+.farm-btn.copy:hover { background: rgba(251,191,36,0.2); }
 
 .farm-chevron {
     transition: transform 0.3s;
@@ -1271,6 +1279,8 @@ body {
     border: 1px solid var(--border-subtle);
     border-radius: 5px;
     transition: all 0.2s;
+    cursor: pointer;
+    position: relative;
 }
 
 .port-item:hover {
@@ -1308,6 +1318,29 @@ body {
 
 .port-item.vip .port-value {
     color: var(--amber-400);
+}
+
+.port-copy-icon {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    opacity: 0;
+    color: var(--text-tertiary);
+    transition: opacity 0.15s;
+}
+
+.port-item:hover .port-copy-icon {
+    opacity: 0.6;
+}
+
+.port-item.copied {
+    border-color: var(--green-400) !important;
+    background: rgba(34, 197, 94, 0.15) !important;
+}
+
+.port-item.copied .port-copy-icon {
+    opacity: 1;
+    color: var(--green-400);
 }
 
 .session-actions {
@@ -4265,6 +4298,16 @@ body {
 
 .ov-ctrl-check:hover {
     background: rgba(34,211,238,0.2);
+}
+
+.ov-ctrl-copy {
+    background: rgba(251,191,36,0.1);
+    color: var(--amber-400);
+    border: 1px solid rgba(251,191,36,0.2);
+}
+
+.ov-ctrl-copy:hover {
+    background: rgba(251,191,36,0.2);
 }
 
 .ov-ctrl-btn.loading {

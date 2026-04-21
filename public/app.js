@@ -569,15 +569,16 @@ function renderSessionCard(s) {
     const vipPort = s.vipPort || '';
     const regularPorts = ports.length > 1 ? ports.slice(1) : [];
 
-    // Build ports display
+    // Build ports display (click to copy IP:port)
     var portsHtml = '';
+    var sessionIp = s.ip || '';
     if (vipPort || regularPorts.length > 0) {
         portsHtml = '<div class="session-ports">';
         if (vipPort) {
-            portsHtml += '<div class="port-item vip" title="VIP Port"><span class="port-label">★ VIP</span><span class="port-value">' + vipPort + '</span></div>';
+            portsHtml += '<div class="port-item vip" title="Click để copy ' + sessionIp + ':' + vipPort + '" onclick="copyToClipboard(\'' + sessionIp + ':' + vipPort + '\', event)"><span class="port-label">★ VIP</span><span class="port-value">' + vipPort + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
         }
         for (var pi = 0; pi < regularPorts.length; pi++) {
-            portsHtml += '<div class="port-item" title="Port ' + (pi + 1) + '"><span class="port-label">P' + (pi + 1) + '</span><span class="port-value">' + regularPorts[pi] + '</span></div>';
+            portsHtml += '<div class="port-item" title="Click để copy ' + sessionIp + ':' + regularPorts[pi] + '" onclick="copyToClipboard(\'' + sessionIp + ':' + regularPorts[pi] + '\', event)"><span class="port-label">P' + (pi + 1) + '</span><span class="port-value">' + regularPorts[pi] + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
         }
         portsHtml += '</div>';
     }
@@ -706,6 +707,7 @@ function renderFarms(sessions) {
                     <button class="farm-btn start" onclick="startFarm(${a})" title="Start farm">▶</button>
                     <button class="farm-btn stop" onclick="stopFarm(${a})" title="Stop farm">■</button>
                     <button class="farm-btn check" onclick="checkFarm(${a})" title="Check farm">✓</button>
+                    <button class="farm-btn copy" onclick="copyFarmVip(${offset}, ${maxSess})" title="Copy IP:VIP Port">📋</button>
                 </div>
                 <svg class="farm-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
@@ -922,6 +924,7 @@ function renderOverview(stats) {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                         Check All
                     </button>
+
                     <div class="ov-ctrl-divider"></div>
                     <div class="auto-start-toggle" id="autoStartToggle">
                         <label class="toggle-switch">
@@ -1795,6 +1798,50 @@ function appendTerminal(text, type) {
 function clearTerminal() {
     const terminal = document.getElementById('terminalOutput');
     terminal.innerHTML = '<span class="term-system">Terminal cleared.\n</span>';
+}
+
+async function copyToClipboard(text, event) {
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (e) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    }
+    showToast('📋 Copied: ' + text, 'success');
+
+    // Visual feedback on the clicked port-item
+    if (event) {
+        var el = event.target.closest('.port-item');
+        if (el) {
+            el.classList.add('copied');
+            setTimeout(function() { el.classList.remove('copied'); }, 600);
+        }
+    }
+}
+
+function copyFarmVip(offset, count) {
+    if (!sessionsData || sessionsData.length === 0) {
+        showToast('Chưa có session nào', 'warning');
+        return;
+    }
+    var lines = [];
+    var end = Math.min(offset + count, sessionsData.length);
+    for (var i = offset; i < end; i++) {
+        var s = sessionsData[i];
+        if (s.status === 'connected' && s.ip && s.vipPort) {
+            lines.push(s.ip + ':' + s.vipPort);
+        }
+    }
+    if (lines.length === 0) {
+        showToast('Không có session nào đang connected', 'warning');
+        return;
+    }
+    copyToClipboard(lines.join('\n'));
+    showToast('📋 Đã copy ' + lines.length + ' IP:VIP Port', 'success');
 }
 
 function showToast(message, type = 'info') {
