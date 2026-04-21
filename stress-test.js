@@ -28,18 +28,21 @@ const DOWNLOAD_TARGETS = [
     // HTTPS targets (will use CONNECT tunnel) — reliable & large
     'https://speed.hetzner.de/100MB.bin',
     'https://proof.ovh.net/files/10Mb.dat',
-    'https://speed.cloudflare.com/__down?bytes=10000000',
+    'https://speed.cloudflare.com/__down?bytes=50000000',
     'https://ash-speed.hetzner.com/100MB.bin',
+    'https://speed.hetzner.de/1GB.bin',
+    'https://speed.cloudflare.com/__down?bytes=100000000',
     // HTTP targets (direct proxy)
     'http://speedtest.tele2.net/10MB.zip',
     'http://ipv4.download.thinkbroadband.com/10MB.zip',
     'http://cachefly.cachefly.net/10mb.test',
+    'http://speedtest.tele2.net/100MB.zip',
 ];
 
 // ─── CLI Args ────────────────────────────────────────────────────────
 function parseArgs() {
     const args = process.argv.slice(2);
-    const opts = { connections: 5, duration: 30, file: null, proxyFile: 'proxies.txt', timeout: 15000 };
+    const opts = { connections: 10, duration: 60, file: null, proxyFile: 'proxies.txt', timeout: 20000 };
     for (let i = 0; i < args.length; i += 2) {
         switch (args[i]) {
             case '--connections': opts.connections = parseInt(args[i + 1]); break;
@@ -368,8 +371,11 @@ async function worker(proxy, stats, targets, timeout, stopSignal) {
 // ─── Known working targets (skip slow probing) ─────────────────────
 const PROVEN_TARGETS = [
     'https://proof.ovh.net/files/10Mb.dat',
-    'https://speed.cloudflare.com/__down?bytes=10000000',
+    'https://speed.cloudflare.com/__down?bytes=50000000',
     'https://ash-speed.hetzner.com/100MB.bin',
+    'https://speed.hetzner.de/100MB.bin',
+    'https://speed.cloudflare.com/__down?bytes=100000000',
+    'https://speed.hetzner.de/1GB.bin',
 ];
 
 // ─── Dashboard ───────────────────────────────────────────────────────
