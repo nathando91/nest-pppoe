@@ -2961,6 +2961,19 @@ body {
     color: var(--text-primary);
 }
 
+.queue-card-step {
+    font-size: 11px;
+    color: var(--purple-400);
+    margin-bottom: 8px;
+    padding: 4px 8px;
+    background: rgba(168, 85, 247, 0.06);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: fadeIn 0.3s ease;
+}
+
 .queue-card-ips {
     display: flex;
     align-items: center;

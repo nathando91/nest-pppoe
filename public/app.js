@@ -1537,6 +1537,7 @@ function renderRotationQueue(entries) {
                 '<span class="queue-card-session">' + e.iface + '</span>' +
                 '<span class="queue-badge ' + statusClass + '">' + statusText + nextRetry + '</span>' +
             '</div>' +
+            (e.message ? '<div class="queue-card-step">' + escapeHtml(e.message) + '</div>' : '') +
             '<div class="queue-card-ips">' +
                 '<div class="queue-card-ip">' +
                     '<span class="queue-card-label">IP Cũ</span>' +
