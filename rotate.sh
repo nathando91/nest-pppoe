@@ -13,10 +13,11 @@ if [ -z "$ID" ]; then
 fi
 
 IFACE="ppp${ID}"
-PEER="nest_ppp${ID}"
 MACVLAN="macppp${ID}"
-NIC=$(cat /root/nest/config.json | grep -oP '"interface"\s*:\s*"\K[^"]+' | head -1)
+CONFIG_FILE="/root/nest/config.json"
+NIC=$(cat "$CONFIG_FILE" | grep -oP '"interface"\s*:\s*"\K[^"]+' | head -1)
 NIC=${NIC:-enp1s0f0}
+USER=$(cat "$CONFIG_FILE" | grep -oP '"username"\s*:\s*"\K[^"]+' | head -1)
 MAX_ATTEMPTS=10
 START=$(date +%s%3N)
 
@@ -36,8 +37,9 @@ do_rotate() {
 
     step "🔄 [Lần $attempt] Rotating ${IFACE}..."
 
-    # Kill all pppd for this session
-    pkill -9 -f "^pppd call ${PEER}$" 2>/dev/null || true
+    # Kill pppd for this session by unit number (new format) or peer name (legacy)
+    pkill -9 -f "unit ${ID}[^0-9]" 2>/dev/null || true
+    pkill -9 -f "^pppd call nest_ppp${ID}$" 2>/dev/null || true
     PID_FILE="/var/run/${IFACE}.pid"
     [ -f "$PID_FILE" ] && kill -9 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
 
@@ -76,8 +78,16 @@ do_rotate() {
         sleep 1
     fi
 
-    # Connect pppd
-    pppd call "$PEER" &
+    # Connect pppd with dynamic args (no peer file needed)
+    # Password is read from chap-secrets (already configured during install)
+    local PPPD_NIC="$MACVLAN"
+    if [ "$ID" -eq 0 ]; then
+        PPPD_NIC="$NIC"
+    fi
+    pppd plugin pppoe.so "nic-${PPPD_NIC}" user "$USER" \
+        unit "$ID" noipdefault nodefaultroute hide-password noauth \
+        nopersist maxfail 1 mtu 1492 mru 1492 \
+        lcp-echo-interval 20 lcp-echo-failure 3 &
     disown
 
     # Wait for IP (max 15s)
@@ -123,3 +133,4 @@ done
 
 echo "❌ Thất bại sau $MAX_ATTEMPTS lần thử"
 exit 1
+
