@@ -15,6 +15,24 @@ const nestproxy = require('./lib/nestproxy');
 
 const PORT = 3000;
 
+// ============ GRACEFUL SHUTDOWN ============
+// Save state on exit without killing pppd/3proxy children
+
+function gracefulShutdown(signal) {
+    console.log('\n⚡ Received ' + signal + ' — saving state (pppd/3proxy will keep running)...');
+    try {
+        // Save stopped sessions state
+        healthCheck.saveState();
+        console.log('   ✅ Health check state saved');
+    } catch (e) {
+        console.error('   ❌ Save state error:', e.message);
+    }
+    process.exit(0);
+}
+
+process.on('SIGINT', function() { gracefulShutdown('SIGINT'); });
+process.on('SIGTERM', function() { gracefulShutdown('SIGTERM'); });
+
 // ============ APP SETUP ============
 
 const app = express();
@@ -255,22 +273,7 @@ server.listen(PORT, '0.0.0.0', function() {
         var { readConfig } = require('./lib/config');
         var config = readConfig();
         if (config.auto_start) {
-            console.log('🟢 Auto Start is ON — starting all sessions...');
-            // Trigger start-all via internal HTTP call
-            var autoReq = http.request({
-                hostname: '127.0.0.1',
-                port: PORT,
-                path: '/api/start-all',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-internal-secret': INTERNAL_SECRET
-                }
-            });
-            autoReq.on('error', function(e) {
-                console.error('   Auto-start request failed:', e.message);
-            });
-            autoReq.end();
+            console.log('🟢 Auto Start is ON — health check will auto-start down sessions (after 60s)');
         } else {
             console.log('⚪ Auto Start is OFF — sessions will not auto-start');
         }
@@ -282,8 +285,15 @@ async function recoverProxies() {
     var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids } = require('./lib/pppoe');
     var healthCheck = require('./lib/healthcheck');
 
+    // Load persisted health check state (stopped sessions, etc.)
+    healthCheck.loadState();
+
     // Scan existing pppd processes and track PIDs (kill duplicates only)
-    var trackedPids = await scanExistingPids();
+    await scanExistingPids();
+
+    // Load existing proxy tracking from previous run (preserves server sync data)
+    // Entries for dead sessions will be cleaned up below
+    nestproxy.loadAndValidateTracking();
 
     var config = readConfig();
     var total = getTotalSessions(config);
@@ -291,8 +301,9 @@ async function recoverProxies() {
     var downSessions = [];
     var waitingSessions = [];
     var cgnatSessions = [];
+    var preservedSessions = []; // Sessions with valid tracking from previous run
 
-    // Track healthy sessions for nestproxy sync
+    // Track healthy sessions for nestproxy sync (only those NOT already tracked)
     var healthySessions = [];
 
     // Check if any 3proxy is already running
@@ -308,9 +319,6 @@ async function recoverProxies() {
         console.log('🔄 Auto-recovering 3proxy for active sessions...');
     }
 
-    // Check which sessions have pppd running (from scanExistingPids)
-    var pppdRunning = await scanExistingPids();
-
     for (var i = 0; i < total; i++) {
         var iface = 'ppp' + i;
         var ip = await getSessionIP(iface);
@@ -323,6 +331,23 @@ async function recoverProxies() {
             }
             // Mark as started so health check monitors it
             healthCheck.markStarted(i);
+
+            // Check if this session already has valid tracking from previous run
+            var existingTracking = nestproxy.getSessionTracking(i);
+            if (existingTracking && existingTracking.ip === ip && existingTracking.proxyIds && existingTracking.proxyIds.length > 0) {
+                // Session still alive with same IP — skip re-sync
+                preservedSessions.push(i);
+                // Still ensure 3proxy is running for this session
+                if (!alreadyRunning) {
+                    try {
+                        var result = await setupProxy(i, ip);
+                        recovered++;
+                    } catch (e) {
+                        console.error('   ❌ ppp' + i + ' 3proxy recovery failed:', e.message);
+                    }
+                }
+                continue;
+            }
 
             if (!alreadyRunning) {
                 try {
@@ -354,6 +379,11 @@ async function recoverProxies() {
                 downSessions.push(i);
             }
         }
+    }
+
+    // Log preserved sessions
+    if (preservedSessions.length > 0) {
+        console.log('🔒 Preserved ' + preservedSessions.length + ' session(s) from previous run: ppp' + preservedSessions.join(', ppp'));
     }
 
     if (!alreadyRunning && recovered > 0) {
@@ -392,7 +422,7 @@ async function recoverProxies() {
         }
     }
 
-    // Push healthy sessions to NestProxy server
+    // Push healthy sessions to NestProxy server (only those not already tracked)
     if (healthySessions.length > 0 && nestproxy.isEnabled()) {
         console.log('🔄 Syncing ' + healthySessions.length + ' healthy session(s) to NestProxy server...');
         for (var h = 0; h < healthySessions.length; h++) {
@@ -411,4 +441,5 @@ async function recoverProxies() {
         console.log('ℹ️  ' + downSessions.length + ' sessions are truly down: ppp' + downSessions.join(', ppp'));
         console.log('   Health check will auto-start them if needed (after 60s delay)');
     }
+
 }

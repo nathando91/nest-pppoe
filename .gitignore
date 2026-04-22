@@ -21,3 +21,4 @@ blacklist.txt
 IP.txt
 config.json
 proxy_tracking.json
+healthcheck_state.json
