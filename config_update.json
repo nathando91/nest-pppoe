@@ -1,0 +1,18 @@
+{
+  "machine_id": 39,
+  "password": "",
+  "pppoe": [
+    {
+      "username": "dng_gftth_nestgroupctt0",
+      "password": "4EB9Y8",
+      "max_session": 36,
+      "interface": "enp1s0f0"
+    }
+  ],
+  "auto_start": true,
+  "server_url": "https://ndachain.live",
+  "server_api_key": "9huydeptrai-46ce-4c80-b0d2-73793b2d2fce",
+  "server_enabled": true,
+  "remote_url": "http://localhost:3001",
+  "remote_enabled": true
+}

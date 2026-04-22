@@ -331,6 +331,36 @@
                 </div>
             </div>
 
+            <!-- Remote Hub Bridge Card -->
+            <div class="server-sync-card" style="margin-top:16px" id="remoteBridgeCard">
+                <div class="server-sync-header">
+                    <div class="server-sync-title">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        <span>Remote Hub Bridge (3001)</span>
+                        <span class="server-sync-badge" id="remoteHubBadge">OFF</span>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="remoteHubToggle" onchange="toggleRemoteHub()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="server-sync-body">
+                    <div class="server-sync-fields">
+                        <div class="config-section" style="margin-bottom:12px">
+                            <label class="config-label">Hub URL</label>
+                            <input type="url" class="config-input" id="remoteHubUrl" placeholder="http://localhost:3001">
+                            <small class="config-hint">Địa chỉ của máy chủ machine-manager</small>
+                        </div>
+                        <div class="config-actions">
+                            <button class="btn btn-sm btn-primary" onclick="saveRemoteConfig()" id="btnSaveRemote">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                                Lưu Remote Config
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Per-Session Sync Status -->
             <div class="server-sync-card" style="margin-top:16px" id="syncSessionsCard">
                 <div class="server-sync-header">

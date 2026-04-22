@@ -288,6 +288,14 @@ async function loadConfig() {
         document.getElementById('serverApiKey').value = config.server_api_key || '';
         document.getElementById('serverSyncToggle').checked = !!config.server_enabled;
         updateServerSyncBadge(!!config.server_enabled);
+
+        // Load Remote Hub fields
+        var rhUrl = document.getElementById('remoteHubUrl');
+        var rhToggle = document.getElementById('remoteHubToggle');
+        if (rhUrl) rhUrl.value = config.remote_url || 'http://localhost:3001';
+        if (rhToggle) rhToggle.checked = config.remote_enabled !== false;
+        updateRemoteHubBadge(config.remote_enabled !== false);
+
         renderAccounts(config.pppoe || []);
 
         // Store auto_start in configCache for renderOverview
@@ -444,7 +452,9 @@ async function saveConfig() {
         auto_start: !!(configCache && configCache.auto_start),
         server_url: (configCache && configCache.server_url) || 'https://ndachain.live',
         server_api_key: (configCache && configCache.server_api_key) || '',
-        server_enabled: !!(configCache && configCache.server_enabled)
+        server_enabled: !!(configCache && configCache.server_enabled),
+        remote_url: document.getElementById('remoteHubUrl') ? document.getElementById('remoteHubUrl').value.trim() : (configCache && configCache.remote_url) || 'http://localhost:3001',
+        remote_enabled: document.getElementById('remoteHubToggle') ? document.getElementById('remoteHubToggle').checked : (configCache && configCache.remote_enabled !== false)
     };
 
     try {
@@ -1627,6 +1637,55 @@ async function toggleServerSync() {
     } catch (e) {
         showToast('Lỗi lưu cấu hình', 'error');
         toggle.checked = !enabled;
+    }
+}
+
+function updateRemoteHubBadge(enabled) {
+    var badge = document.getElementById('remoteHubBadge');
+    if (badge) {
+        badge.textContent = enabled ? 'ON' : 'OFF';
+        badge.className = 'server-sync-badge' + (enabled ? ' badge-on' : '');
+    }
+}
+
+async function toggleRemoteHub() {
+    var toggle = document.getElementById('remoteHubToggle');
+    var enabled = toggle.checked;
+    updateRemoteHubBadge(enabled);
+    // Remote config is saved via Save Remote Config button, 
+    // but we can auto-save the toggle state here for better UX
+    await saveRemoteConfig(true);
+}
+
+async function saveRemoteConfig(isToggleOnly = false) {
+    var url = document.getElementById('remoteHubUrl').value.trim();
+    var enabled = document.getElementById('remoteHubToggle').checked;
+
+    if (!isToggleOnly && !url) {
+        showToast('Vui lòng nhập Hub URL', 'error');
+        return;
+    }
+
+    try {
+        var res = await fetch('/api/config');
+        var config = await res.json();
+        config.remote_url = url;
+        config.remote_enabled = enabled;
+
+        var saveRes = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        var data = await saveRes.json();
+        if (data.success) {
+            configCache = config;
+            if (!isToggleOnly) showToast('✅ Đã lưu cấu hình Remote Hub', 'success');
+        } else {
+            showToast('Lỗi: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi kết nối server', 'error');
     }
 }
 

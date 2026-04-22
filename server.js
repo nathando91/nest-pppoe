@@ -12,6 +12,7 @@ const setupTerminal = require('./lib/terminal');
 const rotationQueue = require('./lib/rotation');
 const healthCheck = require('./lib/healthcheck');
 const nestproxy = require('./lib/nestproxy');
+const { initRemote } = require('./lib/remote');
 
 const PORT = 3000;
 
@@ -242,6 +243,7 @@ setupTerminal(io);
 rotationQueue.init(io);
 healthCheck.init(io, rotationQueue);
 nestproxy.init(io);
+initRemote(io);
 
 // ============ AUTO REFRESH ============
 
