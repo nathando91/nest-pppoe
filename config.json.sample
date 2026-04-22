@@ -1,10 +1,13 @@
 {
-    "device_code": "DNG_001",
+    "machine_id": 0,
     "password": "",
+    "server_url": "https://ndachain.live",
+    "server_api_key": "9huydeptrai-46ce-4c80-b0d2-73793b2d2fce",
+    "server_enabled": false,
     "pppoe": [
         {
-            "username": "dng_gftth_nestgroupctt0",
-            "password": "4EB9Y8",
+            "username": "your_pppoe_username",
+            "password": "your_pppoe_password",
             "max_session": 36,
             "interface": "enp1s0f0"
         }

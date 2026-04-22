@@ -4390,3 +4390,230 @@ body {
         height: 12px;
     }
 }
+
+/* ============ SERVER SYNC CARD ============ */
+
+.server-sync-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xl);
+    margin-top: 16px;
+    overflow: hidden;
+}
+
+.server-sync-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.03), rgba(168, 85, 247, 0.03));
+}
+
+.server-sync-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.server-sync-title svg {
+    color: var(--indigo-400);
+    flex-shrink: 0;
+}
+
+.server-sync-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-tertiary);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.server-sync-badge.badge-on {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--green-400);
+    border-color: rgba(34, 197, 94, 0.2);
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.1);
+}
+
+.server-sync-body {
+    padding: 16px 20px;
+}
+
+.server-sync-status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+}
+
+.server-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.server-status-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+.server-status-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.server-status-value.status-connected {
+    color: var(--green-400);
+}
+
+.server-status-value.status-disconnected {
+    color: var(--red-400);
+}
+
+.server-sync-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.server-sync-fields .config-section {
+    margin-bottom: 0;
+}
+
+.server-sync-fields .config-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 0;
+}
+
+/* Header Server Status Dot */
+.server-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    margin-left: 4px;
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+}
+
+.server-status-dot.dot-online {
+    background: var(--green-400);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+    animation: dotPulse 2s ease-in-out infinite;
+}
+
+.server-status-dot.dot-offline {
+    background: var(--red-400);
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.5);
+    animation: dotPulse 1s ease-in-out infinite;
+}
+
+@media (max-width: 768px) {
+    .server-sync-header {
+        padding: 12px 16px;
+    }
+    .server-sync-body {
+        padding: 12px 16px;
+    }
+    .server-sync-fields .config-actions {
+        flex-direction: column;
+    }
+}
+
+/* ============ SYNC SESSION LIST ============ */
+
+.sync-sessions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sync-empty {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.sync-session-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 100px;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+}
+
+.sync-session-row:hover {
+    border-color: var(--border-active);
+}
+
+.sync-session-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--indigo-400);
+}
+
+.sync-session-ip {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+}
+
+.sync-session-proxies {
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.sync-session-status {
+    font-weight: 600;
+    text-align: right;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--text-tertiary);
+}
+
+.sync-session-status.status-connected {
+    color: var(--green-400);
+}
+
+.sync-session-status.status-rotating {
+    color: var(--amber-400);
+}
+
+.sync-session-status.status-done {
+    color: var(--purple-400);
+}
+
+@media (max-width: 600px) {
+    .sync-session-row {
+        grid-template-columns: 60px 1fr 100px;
+    }
+    .sync-session-proxies {
+        display: none;
+    }
+}

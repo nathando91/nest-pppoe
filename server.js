@@ -11,6 +11,7 @@ const registerRoutes = require('./lib/routes');
 const setupTerminal = require('./lib/terminal');
 const rotationQueue = require('./lib/rotation');
 const healthCheck = require('./lib/healthcheck');
+const nestproxy = require('./lib/nestproxy');
 
 const PORT = 3000;
 
@@ -222,6 +223,7 @@ registerRoutes(app, io);
 setupTerminal(io);
 rotationQueue.init(io);
 healthCheck.init(io, rotationQueue);
+nestproxy.init(io);
 
 // ============ AUTO REFRESH ============
 
@@ -277,13 +279,21 @@ server.listen(PORT, '0.0.0.0', function() {
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
-    var { getSessionIP, setupProxy, connectPppoe, sleep, isPrivateIP } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids } = require('./lib/pppoe');
+    var healthCheck = require('./lib/healthcheck');
+
+    // Scan existing pppd processes and track PIDs (kill duplicates only)
+    var trackedPids = await scanExistingPids();
 
     var config = readConfig();
     var total = getTotalSessions(config);
     var recovered = 0;
     var downSessions = [];
+    var waitingSessions = [];
     var cgnatSessions = [];
+
+    // Track healthy sessions for nestproxy sync
+    var healthySessions = [];
 
     // Check if any 3proxy is already running
     var alreadyRunning = false;
@@ -298,27 +308,51 @@ async function recoverProxies() {
         console.log('🔄 Auto-recovering 3proxy for active sessions...');
     }
 
+    // Check which sessions have pppd running (from scanExistingPids)
+    var pppdRunning = await scanExistingPids();
+
     for (var i = 0; i < total; i++) {
         var iface = 'ppp' + i;
         var ip = await getSessionIP(iface);
         if (ip) {
-            // Skip CGNAT/private IPs — proxy won't work, let health check auto-rotate
+            // Has IP — setup proxy
             if (isPrivateIP(ip)) {
                 cgnatSessions.push(i);
                 console.log('   ⚠️ ppp' + i + ' has CGNAT IP (' + ip + '), skipping proxy setup');
                 continue;
             }
+            // Mark as started so health check monitors it
+            healthCheck.markStarted(i);
+
             if (!alreadyRunning) {
                 try {
-                    await setupProxy(i, ip);
+                    var result = await setupProxy(i, ip);
                     recovered++;
+                    if (result && result.ports) {
+                        healthySessions.push({ id: i, ip: ip, ports: result.ports });
+                    }
                 } catch (e) {
                     console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
                 }
+            } else {
+                // 3proxy already running — read existing port config
+                var portInfo = getProxyPorts(i);
+                if (portInfo && portInfo.ports && portInfo.ports.length > 0) {
+                    healthySessions.push({ id: i, ip: ip, ports: portInfo.ports.map(Number) });
+                }
             }
         } else {
-            // Session is down — collect for auto-start
-            downSessions.push(i);
+            // No IP — check if pppd is running (waiting for PADO)
+            var hasPppd = await require('./lib/pppoe').shellExec('pgrep -f "pppd call nest_ppp' + i + '$" 2>/dev/null');
+            if (hasPppd) {
+                // pppd running but no IP yet — give it time, don't kill
+                waitingSessions.push(i);
+                healthCheck.markStarted(i);
+                console.log('   ⏳ ppp' + i + ' has pppd running, waiting for IP...');
+            } else {
+                // Truly down — no pppd at all
+                downSessions.push(i);
+            }
         }
     }
 
@@ -327,9 +361,54 @@ async function recoverProxies() {
         io.emit('refresh');
     }
 
+    // Wait for sessions that have pppd but no IP yet
+    if (waitingSessions.length > 0) {
+        console.log('⏳ Waiting for ' + waitingSessions.length + ' session(s) with pppd (up to 20s)...');
+        for (var w = 0; w < waitingSessions.length; w++) {
+            var wId = waitingSessions[w];
+            var wIface = 'ppp' + wId;
+            var gotIp = false;
+            for (var t = 0; t < 20; t++) {
+                var wIp = await getSessionIP(wIface);
+                if (wIp) {
+                    if (!isPrivateIP(wIp)) {
+                        var wResult = await setupProxy(wId, wIp);
+                        if (wResult && wResult.ports) {
+                            healthySessions.push({ id: wId, ip: wIp, ports: wResult.ports });
+                        }
+                        console.log('   ✅ ppp' + wId + ' got IP: ' + wIp);
+                    } else {
+                        console.log('   ⚠️ ppp' + wId + ' got CGNAT IP: ' + wIp);
+                    }
+                    gotIp = true;
+                    break;
+                }
+                await sleep(1000);
+            }
+            if (!gotIp) {
+                console.log('   ❌ ppp' + wId + ' timeout — will auto-retry via health check');
+                downSessions.push(wId);
+            }
+        }
+    }
+
+    // Push healthy sessions to NestProxy server
+    if (healthySessions.length > 0 && nestproxy.isEnabled()) {
+        console.log('🔄 Syncing ' + healthySessions.length + ' healthy session(s) to NestProxy server...');
+        for (var h = 0; h < healthySessions.length; h++) {
+            var hs = healthySessions[h];
+            try {
+                await nestproxy.syncSessionProxies(hs.id, hs.ip, hs.ports);
+            } catch (e) {
+                console.error('   ❌ Sync ppp' + hs.id + ' failed:', e.message);
+            }
+        }
+        console.log('✅ NestProxy sync complete');
+    }
+
     // Log down sessions (health check will handle auto-starting if needed)
     if (downSessions.length > 0) {
-        console.log('ℹ️  ' + downSessions.length + ' sessions are down: ppp' + downSessions.join(', ppp'));
-        console.log('   Health check will auto-start them if needed (after 30s delay)');
+        console.log('ℹ️  ' + downSessions.length + ' sessions are truly down: ppp' + downSessions.join(', ppp'));
+        console.log('   Health check will auto-start them if needed (after 60s delay)');
     }
 }

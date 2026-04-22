@@ -201,7 +201,7 @@ async function initApp() {
 // ============ TAB NAVIGATION ============
 
 // Tabs that live inside the "More" menu on mobile
-var moreMenuTabs = ['terminal', 'console', 'config'];
+var moreMenuTabs = ['terminal', 'console', 'sync', 'config'];
 
 function setupTabs() {
     // Top tabs (desktop)
@@ -279,9 +279,15 @@ async function loadConfig() {
     try {
         const res = await fetch('/api/config');
         const config = await res.json();
-        document.getElementById('configDeviceCode').value = config.device_code || '';
+        document.getElementById('configMachineId').value = config.machine_id || 0;
         document.getElementById('configPassword').value = config.password || '';
-        document.getElementById('deviceCode').textContent = config.device_code || 'N/A';
+        document.getElementById('deviceCode').textContent = 'M:' + (config.machine_id || '---');
+
+        // Load server sync fields
+        document.getElementById('serverUrl').value = config.server_url || 'https://ndachain.live';
+        document.getElementById('serverApiKey').value = config.server_api_key || '';
+        document.getElementById('serverSyncToggle').checked = !!config.server_enabled;
+        updateServerSyncBadge(!!config.server_enabled);
         renderAccounts(config.pppoe || []);
 
         // Store auto_start in configCache for renderOverview
@@ -432,10 +438,13 @@ function getAccountsFromForm() {
 
 async function saveConfig() {
     const config = {
-        device_code: document.getElementById('configDeviceCode').value,
+        machine_id: parseInt(document.getElementById('configMachineId').value) || 0,
         password: document.getElementById('configPassword').value.trim(),
         pppoe: getAccountsFromForm(),
-        auto_start: !!(configCache && configCache.auto_start)
+        auto_start: !!(configCache && configCache.auto_start),
+        server_url: (configCache && configCache.server_url) || 'https://ndachain.live',
+        server_api_key: (configCache && configCache.server_api_key) || '',
+        server_enabled: !!(configCache && configCache.server_enabled)
     };
 
     try {
@@ -447,7 +456,7 @@ async function saveConfig() {
         const data = await res.json();
         if (data.success) {
             showToast('Đã lưu cấu hình thành công!', 'success');
-            document.getElementById('deviceCode').textContent = config.device_code;
+            document.getElementById('deviceCode').textContent = 'M:' + (config.machine_id || '---');
             configCache = config;
             renderFarms(sessionsData);
         } else {
@@ -466,7 +475,7 @@ function importConfig() {
             showToast('JSON không hợp lệ: thiếu mảng pppoe', 'error');
             return;
         }
-        document.getElementById('configDeviceCode').value = config.device_code || '';
+        document.getElementById('configMachineId').value = config.machine_id || 0;
         renderAccounts(config.pppoe);
         showToast(`Đã import ${config.pppoe.length} account`, 'success');
         textarea.value = '';
@@ -916,6 +925,10 @@ function renderOverview(stats) {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                         Stop All
                     </button>
+                    <button class="ov-ctrl-btn ov-ctrl-stop" onclick="killAllPid()" id="btnKillPid" title="Kill All PID" style="background:linear-gradient(135deg,#dc2626,#b91c1c)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Kill PID
+                    </button>
                     <button class="ov-ctrl-btn ov-ctrl-refresh" onclick="refreshStatus()" id="btnRefresh" title="Refresh">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                         Refresh
@@ -953,7 +966,7 @@ function renderOverview(stats) {
                 </div>
                 <div class="ov-card-body">
                     <div class="ov-card-label">Device</div>
-                    <div class="ov-card-value" style="font-size:18px">${escapeHtml((configCache && configCache.device_code) || 'N/A')}</div>
+                    <div class="ov-card-value" style="font-size:18px">Machine #${(configCache && configCache.machine_id) || '---'}</div>
                     <div class="ov-card-sub">${cpuCores} CPU cores · Load: ${loadAvg[0].toFixed(2)}</div>
                 </div>
             </div>
@@ -1236,6 +1249,20 @@ async function startAll() {
     }
 }
 
+async function killAllPid() {
+    if (!confirm('⚠️ Kill ALL pppd & 3proxy PIDs?\nĐiều này sẽ ngắt tất cả kết nối ngay lập tức.')) return;
+    const btn = document.getElementById('btnKillPid');
+    btn.classList.add('loading');
+    showToast('💀 Đang kill tất cả PIDs...', 'info');
+    try {
+        await fetch('/api/kill-all-pid', { method: 'POST' });
+        showToast('✅ Đã kill tất cả PIDs', 'success');
+    } catch (e) {
+        showToast('❌ Lỗi kill PID', 'error');
+    }
+    btn.classList.remove('loading');
+}
+
 async function stopAll() {
     const btn = document.getElementById('btnStopAll');
     btn.classList.add('loading');
@@ -1472,6 +1499,175 @@ socket.on('refresh', () => {
     // Reload IP list (IP.txt may have changed)
     loadIPListUI();
 });
+
+// ============ NESTPROXY SERVER SYNC ============
+
+var lastNestproxyStatus = null;
+
+socket.on('nestproxy_status', (data) => {
+    lastNestproxyStatus = data;
+    updateServerSyncUI(data);
+});
+
+socket.on('nestproxy_session_done', (data) => {
+    showToast('🔄 Session ' + data.sessionId + ' DONE — triggering rotation', 'info');
+});
+
+function updateServerSyncUI(data) {
+    if (!data) return;
+
+    // Connection status
+    var connEl = document.getElementById('serverConnStatus');
+    var dotEl = document.getElementById('headerServerDot');
+    if (connEl) {
+        if (!data.enabled) {
+            connEl.textContent = '⚫ Chưa bật';
+            connEl.className = 'server-status-value';
+        } else if (data.connected) {
+            connEl.textContent = '🟢 Đang kết nối';
+            connEl.className = 'server-status-value status-connected';
+        } else {
+            connEl.textContent = '🔴 Mất kết nối';
+            connEl.className = 'server-status-value status-disconnected';
+        }
+    }
+    if (dotEl) {
+        dotEl.className = 'server-status-dot' + (data.enabled ? (data.connected ? ' dot-online' : ' dot-offline') : '');
+        dotEl.title = 'Server: ' + (data.enabled ? (data.connected ? 'Online' : 'Offline') : 'Disabled');
+    }
+
+    // Machine ID
+    var midEl = document.getElementById('serverMachineIdDisplay');
+    if (midEl) midEl.textContent = data.machineId ? '#' + data.machineId : '---';
+
+    // Also update header badge if machine_id changed
+    if (data.machineId && configCache) {
+        configCache.machine_id = data.machineId;
+        document.getElementById('deviceCode').textContent = 'M:' + data.machineId;
+        var configInput = document.getElementById('configMachineId');
+        if (configInput && parseInt(configInput.value) !== data.machineId) {
+            configInput.value = data.machineId;
+        }
+    }
+
+    // Proxy stats
+    var statsEl = document.getElementById('serverProxyStats');
+    if (statsEl && data.proxyStats) {
+        var ps = data.proxyStats;
+        statsEl.innerHTML = '<span style="color:var(--green-400)">' + ps.waiting + ' waiting</span> · ' +
+            '<span style="color:var(--indigo-400)">' + ps.used + ' used</span> · ' +
+            '<span style="color:var(--text-tertiary)">' + ps.done + ' done</span> · ' +
+            'Total: ' + ps.total;
+    }
+
+    // Update tab dot
+    var tabDot = document.getElementById('tabSyncDot');
+    if (tabDot) {
+        tabDot.className = 'server-status-dot' + (data.enabled ? (data.connected ? ' dot-online' : ' dot-offline') : '');
+    }
+
+    // Render per-session proxy list
+    if (data.sessions) {
+        renderSyncSessionsList(data.sessions);
+    }
+}
+
+function renderSyncSessionsList(sessions) {
+    var container = document.getElementById('syncSessionsList');
+    if (!container) return;
+
+    if (!sessions || sessions.length === 0) {
+        container.innerHTML = '<div class="sync-empty">Chưa có session nào được đồng bộ</div>';
+        return;
+    }
+
+    var html = '';
+    for (var i = 0; i < sessions.length; i++) {
+        var s = sessions[i];
+        var statusIcon = '⚫';
+        var statusClass = '';
+        if (s.status === 'ready') { statusIcon = '🟢'; statusClass = 'status-connected'; }
+        else if (s.status === 'changing_ip') { statusIcon = '🔄'; statusClass = 'status-rotating'; }
+        else if (s.status === 'done') { statusIcon = '✅'; statusClass = 'status-done'; }
+
+        html += '<div class="sync-session-row">' +
+            '<div class="sync-session-id">ppp' + s.id + '</div>' +
+            '<div class="sync-session-ip">' + (s.ip || '---') + '</div>' +
+            '<div class="sync-session-proxies">' + (s.proxyCount || 0) + ' proxies</div>' +
+            '<div class="sync-session-status ' + statusClass + '">' + statusIcon + ' ' + (s.status || 'unknown') + '</div>' +
+            '</div>';
+    }
+    container.innerHTML = html;
+}
+
+function updateServerSyncBadge(enabled) {
+    var badge = document.getElementById('serverSyncBadge');
+    if (badge) {
+        badge.textContent = enabled ? 'ON' : 'OFF';
+        badge.className = 'server-sync-badge' + (enabled ? ' badge-on' : '');
+    }
+}
+
+async function toggleServerSync() {
+    var toggle = document.getElementById('serverSyncToggle');
+    var enabled = toggle.checked;
+
+    try {
+        var res = await fetch('/api/config');
+        var config = await res.json();
+        config.server_enabled = enabled;
+        await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        configCache = config;
+        updateServerSyncBadge(enabled);
+        showToast(enabled ? '🟢 Server Sync đã bật' : '⚫ Server Sync đã tắt', enabled ? 'success' : 'info');
+    } catch (e) {
+        showToast('Lỗi lưu cấu hình', 'error');
+        toggle.checked = !enabled;
+    }
+}
+
+async function saveServerConfig() {
+    var serverUrl = document.getElementById('serverUrl').value.trim();
+    var apiKey = document.getElementById('serverApiKey').value.trim();
+
+    if (!serverUrl) { showToast('Vui lòng nhập Server URL', 'error'); return; }
+    if (!apiKey) { showToast('Vui lòng nhập API Key', 'error'); return; }
+
+    try {
+        var res = await fetch('/api/config');
+        var config = await res.json();
+        config.server_url = serverUrl;
+        config.server_api_key = apiKey;
+        await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        configCache = config;
+        showToast('✅ Đã lưu Server Config', 'success');
+    } catch (e) {
+        showToast('Lỗi lưu cấu hình', 'error');
+    }
+}
+
+async function testServerConnection() {
+    showToast('🔌 Đang test kết nối server...', 'info');
+    try {
+        var res = await fetch('/api/server-test', { method: 'POST' });
+        var data = await res.json();
+        if (data.success && data.status && data.status.connected) {
+            showToast('✅ Kết nối server thành công!', 'success');
+        } else {
+            showToast('❌ Không thể kết nối server', 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối: ' + e.message, 'error');
+    }
+}
 
 // ============ ROTATION QUEUE ============
 

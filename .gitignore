@@ -20,3 +20,4 @@ node_modules
 blacklist.txt
 IP.txt
 config.json
+proxy_tracking.json
