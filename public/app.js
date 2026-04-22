@@ -190,18 +190,25 @@ async function initApp() {
     loadBlacklistUI();
     loadIPListUI();
     loadInstallStatus();
+    loadSecurityUI();
     setupTabs();
     renderOverview(null);
 
     // Enter key on blacklist input
     var blInput = document.getElementById('blacklistInput');
     if (blInput) blInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') addBlacklistDomain(); });
+
+    // Auto-refresh security if tab is active
+    setInterval(function() {
+        var tab = document.getElementById('securityTab');
+        if (tab && tab.classList.contains('active')) loadSecurityUI();
+    }, 10000);
 }
 
 // ============ TAB NAVIGATION ============
 
 // Tabs that live inside the "More" menu on mobile
-var moreMenuTabs = ['terminal', 'console', 'sync', 'config'];
+var moreMenuTabs = ['terminal', 'console', 'security', 'sync', 'config'];
 
 function setupTabs() {
     // Top tabs (desktop)
@@ -245,6 +252,9 @@ function switchTab(target) {
     // Activate content
     var content = document.getElementById(target + 'Tab');
     if (content) content.classList.add('active');
+
+    // Special logic for tabs
+    if (target === 'security') loadSecurityUI();
 }
 
 // More menu (mobile)
@@ -2268,3 +2278,72 @@ function reconnectConsole() {
         }
     };
 })();
+// ============ SECURITY ============
+
+async function loadSecurityUI() {
+    try {
+        var res = await fetch('/api/security/status');
+        if (res.status === 401) return; // Not authenticated
+        var data = await res.json();
+        
+        // Update stats
+        var blockedCount = (data.blocked || []).length;
+        var eventCount = (data.events || []).length;
+        document.getElementById('secTotalBlocked').textContent = blockedCount;
+        document.getElementById('secTotalEvents').textContent = eventCount;
+
+        // Render blocked IPs
+        var blockedList = document.getElementById('blockedIPsList');
+        if (blockedCount === 0) {
+            blockedList.innerHTML = '<div class="sync-empty">Không có IP nào bị chặn</div>';
+        } else {
+            blockedList.innerHTML = data.blocked.map(b => `
+                <div class="security-item">
+                    <div class="security-item-info">
+                        <div class="security-item-title">${b.ip}</div>
+                        <div class="security-item-detail">${b.reason} · ${new Date(b.since).toLocaleString()}</div>
+                    </div>
+                    <button class="btn btn-sm btn-ghost" onclick="unblockIP('${b.ip}')" style="color:var(--indigo-400)">Mở khóa</button>
+                </div>
+            `).join('');
+        }
+
+        // Render events
+        var eventsList = document.getElementById('securityEventsList');
+        if (eventCount === 0) {
+            eventsList.innerHTML = '<div class="sync-empty">Chưa có sự kiện nào</div>';
+        } else {
+            eventsList.innerHTML = data.events.map(e => `
+                <div class="security-event ${e.type}">
+                    <div class="event-time">${new Date(e.time).toLocaleTimeString()}</div>
+                    <div class="event-msg">
+                        <span class="event-ip">${e.ip}</span>
+                        <span class="event-text">${escapeHtml(e.message)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (e) {
+        console.error('Security UI load error:', e);
+    }
+}
+
+async function unblockIP(ip) {
+    if (!confirm('Bạn có chắc muốn mở khóa cho IP ' + ip + '?')) return;
+    try {
+        var res = await fetch('/api/security/unblock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: ip })
+        });
+        var data = await res.json();
+        if (data.success) {
+            showToast('Đã mở khóa IP ' + ip, 'success');
+            loadSecurityUI();
+        } else {
+            showToast('Lỗi: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi kết nối', 'error');
+    }
+}

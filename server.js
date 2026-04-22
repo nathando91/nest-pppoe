@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const { execSync } = require('child_process');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const { readConfig } = require('./lib/config');
 const { getPPPoEStatus, getSystemStats } = require('./lib/status');
@@ -56,8 +57,24 @@ var LOCKOUT_TIERS = [
     { threshold: 5,  duration: 60 * 1000 },      // 1 minute
     { threshold: 10, duration: 5 * 60 * 1000 },   // 5 minutes
     { threshold: 15, duration: 15 * 60 * 1000 },  // 15 minutes
-    { threshold: 20, duration: 30 * 60 * 1000 }   // 30 minutes
+    { threshold: 20, duration: 30 * 60 * 1000 },  // 30 minutes
+    { threshold: 30, duration: 24 * 60 * 60 * 1000 } // 24 hours (Hard block)
 ];
+
+// In-memory security state (resets on restart)
+var securityEvents = [];
+var blockedIPs = new Map(); // ip -> { reason: string, since: number, count: number }
+
+function logSecurityEvent(type, ip, message) {
+    var event = {
+        time: Date.now(),
+        type: type, // 'success', 'failed', 'blocked', 'unblocked'
+        ip: ip,
+        message: message
+    };
+    securityEvents.push(event);
+    if (securityEvents.length > 500) securityEvents.shift();
+}
 
 function getClientIP(req) {
     return req.headers['x-forwarded-for']
@@ -122,7 +139,17 @@ app.post('/api/auth/login', function(req, res) {
     var clientIP = getClientIP(req);
     var now = Date.now();
 
-    // Check if this IP is currently locked out
+    // Check if this IP is permanently blocked or in lockout
+    var permanent = blockedIPs.get(clientIP);
+    if (permanent) {
+        return res.status(403).json({
+            success: false,
+            error: 'Địa chỉ IP của bạn bị khóa tạm thời do thử sai quá nhiều lần (' + permanent.count + ' lần).',
+            blocked: true,
+            reason: permanent.reason
+        });
+    }
+
     var attemptInfo = loginAttempts.get(clientIP);
     if (attemptInfo && attemptInfo.lockedUntil && now < attemptInfo.lockedUntil) {
         var remainingMs = attemptInfo.lockedUntil - now;
@@ -158,6 +185,7 @@ app.post('/api/auth/login', function(req, res) {
     if (match) {
         // Success — clear failed attempts
         loginAttempts.delete(clientIP);
+        logSecurityEvent('success', clientIP, 'Đăng nhập thành công');
         var token = crypto.randomBytes(32).toString('hex');
         authTokens.add(token);
         res.setHeader('Set-Cookie', 'nest_token=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');
@@ -188,6 +216,17 @@ app.post('/api/auth/login', function(req, res) {
         }
 
         loginAttempts.set(clientIP, attemptInfo);
+        logSecurityEvent('failed', clientIP, 'Thử mật khẩu sai (Lần ' + attemptInfo.count + ')');
+
+        // Check if we should move to blockedIPs (e.g. after 30 attempts)
+        if (attemptInfo.count >= 30) {
+            blockedIPs.set(clientIP, {
+                reason: 'Thử sai quá 30 lần',
+                since: now,
+                count: attemptInfo.count
+            });
+            logSecurityEvent('blocked', clientIP, 'IP bị khóa 24h do thử sai quá 30 lần');
+        }
 
         // Calculate remaining attempts before next lockout
         var nextThreshold = getNextLockThreshold(attemptInfo.count);
@@ -198,8 +237,38 @@ app.post('/api/auth/login', function(req, res) {
             success: false,
             error: 'Mật khẩu không đúng',
             remainingAttempts: remaining,
-            failedAttempts: attemptInfo.count
+            totalFailed: attemptInfo.count
         });
+    }
+});
+
+// ============ SECURITY API ============
+
+app.get('/api/security/status', function(req, res) {
+    if (!isAuthenticated(req)) return res.status(401).json({ error: 'Unauthorized' });
+
+    var blocked = [];
+    blockedIPs.forEach((info, ip) => {
+        blocked.push({ ip: ip, ...info });
+    });
+
+    res.json({
+        events: securityEvents.slice().reverse(), // Newest first
+        blocked: blocked
+    });
+});
+
+app.post('/api/security/unblock', function(req, res) {
+    if (!isAuthenticated(req)) return res.status(401).json({ error: 'Unauthorized' });
+    var ip = req.body.ip;
+    if (ip && blockedIPs.has(ip)) {
+        blockedIPs.delete(ip);
+        loginAttempts.delete(ip); // Reset counter
+        logSecurityEvent('unblocked', ip, 'IP được mở khóa bởi người dùng');
+        console.log('🔓 IP ' + ip + ' unblocked by user');
+        res.json({ success: true });
+    } else {
+        res.status(400).json({ error: 'IP not found in blocklist' });
     }
 });
 
