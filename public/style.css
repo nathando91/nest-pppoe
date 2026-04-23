@@ -1143,6 +1143,19 @@ body {
     border-radius: 6px;
     text-align: center;
     animation: stepPulse 1.5s ease-in-out infinite;
+    /* Always occupies space — prevents layout shift when message appears/disappears */
+    min-height: 26px;
+    box-sizing: border-box;
+}
+
+/* When empty: keep the space but invisible */
+.session-step.session-step-empty {
+    background: transparent;
+    border-color: transparent;
+    animation: none;
+    color: transparent;
+    pointer-events: none;
+    user-select: none;
 }
 
 @keyframes stepPulse {
@@ -1341,6 +1354,17 @@ body {
 .port-item.copied .port-copy-icon {
     opacity: 1;
     color: var(--green-400);
+}
+
+/* Placeholder slots during rotation — keeps grid stable but dimmed */
+.port-item.port-placeholder {
+    cursor: default;
+    pointer-events: none;
+    opacity: 0.25;
+}
+
+.port-item.vip.port-placeholder {
+    opacity: 0.2;
 }
 
 .session-actions {

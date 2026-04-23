@@ -598,16 +598,34 @@ function renderSessionCard(s) {
     const vipPort = s.vipPort || '';
     const regularPorts = ports.length > 1 ? ports.slice(1) : [];
 
+    // Determine the count of port slots to always show (stabilize layout)
+    // During rotation, we may have no ports yet — use _lastPortCount to keep stable height
+    var portCount = (vipPort ? 1 : 0) + regularPorts.length;
+    if (!portCount && s._lastPortCount) portCount = s._lastPortCount;
+    else if (portCount) s._lastPortCount = portCount;
+
     // Build ports display (click to copy IP:port)
-    var portsHtml = '';
+    // Always render the ports grid if we have known slots, to prevent layout shift
     var sessionIp = s.ip || '';
-    if (vipPort || regularPorts.length > 0) {
+    var portsHtml = '';
+    if (portCount > 0) {
         portsHtml = '<div class="session-ports">';
+        // VIP slot
         if (vipPort) {
             portsHtml += '<div class="port-item vip" title="Click để copy ' + sessionIp + ':' + vipPort + '" onclick="copyToClipboard(\'' + sessionIp + ':' + vipPort + '\', event)"><span class="port-label">★ VIP</span><span class="port-value">' + vipPort + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
+        } else if (s._lastPortCount) {
+            // Placeholder VIP slot to preserve height during rotation
+            portsHtml += '<div class="port-item vip port-placeholder"><span class="port-label">★ VIP</span><span class="port-value">---</span></div>';
         }
+        // Regular port slots
+        var shownPorts = regularPorts.length;
+        var placeholderPorts = (s._lastPortCount ? Math.max(0, (s._lastPortCount - (vipPort || s._lastPortCount ? 1 : 0)) - shownPorts) : 0);
         for (var pi = 0; pi < regularPorts.length; pi++) {
             portsHtml += '<div class="port-item" title="Click để copy ' + sessionIp + ':' + regularPorts[pi] + '" onclick="copyToClipboard(\'' + sessionIp + ':' + regularPorts[pi] + '\', event)"><span class="port-label">P' + (pi + 1) + '</span><span class="port-value">' + regularPorts[pi] + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
+        }
+        // Render placeholder slots during rotation so grid doesn't collapse
+        for (var ph = 0; ph < placeholderPorts; ph++) {
+            portsHtml += '<div class="port-item port-placeholder"><span class="port-label">P' + (shownPorts + ph + 1) + '</span><span class="port-value">---</span></div>';
         }
         portsHtml += '</div>';
     }
@@ -621,7 +639,7 @@ function renderSessionCard(s) {
             </div>
             ${s.nextRetryAt && s.step === 'waiting' ? renderCountdownBadge(s.nextRetryAt) : ''}
         </div>
-        ${stepMsg ? `<div class="session-step">${escapeHtml(stepMsg)}</div>` : ''}
+        <div class="session-step${stepMsg ? '' : ' session-step-empty'}">${stepMsg ? escapeHtml(stepMsg) : '&nbsp;'}</div>
         <div class="session-info">
             <div class="session-field">
                 <span class="session-label">IP Address</span>
@@ -805,7 +823,15 @@ function updateSingleSession(data) {
     if (idx !== -1) {
         if (data.ip !== undefined) sessionsData[idx].ip = data.ip;
         if (data.vipPort !== undefined) sessionsData[idx].vipPort = data.vipPort;
-        if (data.ports !== undefined) sessionsData[idx].ports = data.ports;
+        // Only update ports when we actually receive a non-empty ports array
+        // This preserves the last known ports during rotation (prevent layout collapse)
+        if (data.ports !== undefined && data.ports !== null) {
+            if (data.ports.length > 0) {
+                sessionsData[idx].ports = data.ports;
+                sessionsData[idx]._lastPortCount = data.ports.length;
+            }
+            // If ports is empty array, keep old ports for layout stability
+        }
         if (data.status) sessionsData[idx].status = data.status;
         if (data.proxyStatus) sessionsData[idx].proxyStatus = data.proxyStatus;
         sessionsData[idx].message = data.message || '';
@@ -815,14 +841,100 @@ function updateSingleSession(data) {
         if (data.step && data.step !== 'waiting') sessionsData[idx].nextRetryAt = null;
     }
 
-    // Find the card in the DOM and update it
+    // Find the card in the DOM and update it in-place
     var card = document.querySelector('[data-session-id="' + data.id + '"]');
     if (card) {
         var s = idx !== -1 ? sessionsData[idx] : data;
         var temp = document.createElement('div');
         temp.innerHTML = renderSessionCard(s);
         var newCard = temp.firstElementChild;
-        card.replaceWith(newCard);
+        // Patch only changed parts to avoid full DOM replacement flicker
+        patchSessionCard(card, newCard);
+    }
+}
+
+// Patch an existing session card DOM in-place to avoid full replacement flicker
+function patchSessionCard(oldCard, newCard) {
+    // Update data attributes
+    oldCard.dataset.status = newCard.dataset.status;
+    oldCard.className = newCard.className;
+
+    // Patch badge
+    var oldBadge = oldCard.querySelector('.session-badge');
+    var newBadge = newCard.querySelector('.session-badge');
+    if (oldBadge && newBadge && oldBadge.textContent !== newBadge.textContent) {
+        oldBadge.textContent = newBadge.textContent;
+        oldBadge.className = newBadge.className;
+    }
+
+    // Patch step message — always present, just update text (no pop-in/pop-out)
+    var oldStep = oldCard.querySelector('.session-step');
+    var newStep = newCard.querySelector('.session-step');
+    if (oldStep && newStep) {
+        if (oldStep.innerHTML !== newStep.innerHTML) oldStep.innerHTML = newStep.innerHTML;
+        oldStep.className = newStep.className;
+    }
+
+    // Patch IP value
+    var oldIpEl = oldCard.querySelector('.session-value.ip, .session-value.no-ip');
+    var newIpEl = newCard.querySelector('.session-value.ip, .session-value.no-ip');
+    if (oldIpEl && newIpEl && oldIpEl.textContent !== newIpEl.textContent) {
+        oldIpEl.textContent = newIpEl.textContent;
+        oldIpEl.className = newIpEl.className;
+    }
+
+    // Patch ports section — update values in existing slots, avoid re-creating whole grid
+    var oldPorts = oldCard.querySelector('.session-ports');
+    var newPorts = newCard.querySelector('.session-ports');
+    if (newPorts && !oldPorts) {
+        // Ports appeared — insert before session-actions
+        var actions = oldCard.querySelector('.session-actions');
+        if (actions) oldCard.insertBefore(newPorts.cloneNode(true), actions);
+    } else if (oldPorts && newPorts) {
+        // Both exist — patch port values in-place
+        var oldItems = oldPorts.querySelectorAll('.port-item');
+        var newItems = newPorts.querySelectorAll('.port-item');
+        newItems.forEach(function(newItem, i) {
+            if (oldItems[i]) {
+                var oldVal = oldItems[i].querySelector('.port-value');
+                var newVal = newItem.querySelector('.port-value');
+                if (oldVal && newVal && oldVal.textContent !== newVal.textContent) {
+                    oldVal.textContent = newVal.textContent;
+                }
+                // Update placeholder class
+                if (newItem.classList.contains('port-placeholder')) {
+                    oldItems[i].classList.add('port-placeholder');
+                } else {
+                    oldItems[i].classList.remove('port-placeholder');
+                }
+            } else {
+                oldPorts.appendChild(newItem.cloneNode(true));
+            }
+        });
+        // Remove extra old items
+        for (var i = newItems.length; i < oldItems.length; i++) {
+            oldItems[i].remove();
+        }
+    }
+    // If no ports in either old/new, leave as-is
+
+    // Patch actions (buttons may change state)
+    var oldActions = oldCard.querySelector('.session-actions');
+    var newActions = newCard.querySelector('.session-actions');
+    if (oldActions && newActions && oldActions.innerHTML !== newActions.innerHTML) {
+        oldActions.innerHTML = newActions.innerHTML;
+    }
+
+    // Patch countdown badge
+    var oldCd = oldCard.querySelector('.countdown-badge');
+    var newCd = newCard.querySelector('.countdown-badge');
+    if (newCd && !oldCd) {
+        var topDiv = oldCard.querySelector('.session-top');
+        if (topDiv) topDiv.appendChild(newCd.cloneNode(true));
+    } else if (oldCd && !newCd) {
+        oldCd.remove();
+    } else if (oldCd && newCd) {
+        oldCd.dataset.nextRetry = newCd.dataset.nextRetry;
     }
 }
 
@@ -1768,13 +1880,22 @@ function renderRotationQueue(entries) {
     if (!entries || entries.length === 0) {
         emptyState.style.display = '';
         gridWrap.style.display = 'none';
+        container.innerHTML = '';
         return;
     }
 
     emptyState.style.display = 'none';
     gridWrap.style.display = '';
 
-    container.innerHTML = entries.map(function(e) {
+    // Build a map of existing cards
+    var existingCards = {};
+    container.querySelectorAll('.queue-card[data-queue-id]').forEach(function(el) {
+        existingCards[el.dataset.queueId] = el;
+    });
+
+    // Patch in-place rather than full innerHTML replace to prevent text flicker
+    var fragment = document.createDocumentFragment();
+    entries.forEach(function(e) {
         var statusClass = 'queue-status-' + e.status.replace('_', '-');
         var statusText = {
             'queued': '⏳ Đang chờ',
@@ -1791,36 +1912,96 @@ function renderRotationQueue(entries) {
             else elapsed = Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
         }
 
-        var nextRetry = '';
+        var remaining = 0;
         if (e.status === 'pending_retry' && e.nextRetryAt) {
-            var remaining = Math.max(0, Math.floor((e.nextRetryAt - Date.now()) / 1000));
-            nextRetry = ' (' + remaining + 's)';
+            remaining = Math.max(0, Math.floor((e.nextRetryAt - Date.now()) / 1000));
         }
 
-        return '<div class="queue-card ' + statusClass + '">' +
-            '<div class="queue-card-top">' +
-                '<span class="queue-card-session">' + e.iface + '</span>' +
-                '<span class="queue-badge ' + statusClass + '">' + statusText + nextRetry + '</span>' +
-            '</div>' +
-            (e.message ? '<div class="queue-card-step">' + escapeHtml(e.message) + '</div>' : '') +
-            '<div class="queue-card-ips">' +
-                '<div class="queue-card-ip">' +
-                    '<span class="queue-card-label">IP Cũ</span>' +
-                    '<span class="queue-card-val">' + (e.oldIp || '---') + '</span>' +
+        var existing = existingCards[e.id];
+        if (existing) {
+            // Patch in-place — only update changed parts
+            existing.className = 'queue-card ' + statusClass;
+
+            var badgeEl = existing.querySelector('.queue-badge');
+            if (badgeEl) {
+                var newBadgeText = statusText + (remaining > 0 ? ' (' + remaining + 's)' : '');
+                if (badgeEl.textContent !== newBadgeText) badgeEl.textContent = newBadgeText;
+                badgeEl.className = 'queue-badge ' + statusClass;
+            }
+
+            var stepEl = existing.querySelector('.queue-card-step');
+            var newMsg = e.message || '';
+            if (newMsg) {
+                if (!stepEl) {
+                    stepEl = document.createElement('div');
+                    stepEl.className = 'queue-card-step';
+                    var topEl = existing.querySelector('.queue-card-top');
+                    if (topEl && topEl.nextSibling) {
+                        existing.insertBefore(stepEl, topEl.nextSibling);
+                    } else {
+                        existing.appendChild(stepEl);
+                    }
+                }
+                // Always keep element present — just update text to avoid pop-in flicker
+                if (stepEl.textContent !== newMsg) stepEl.textContent = newMsg;
+                stepEl.style.visibility = 'visible';
+            } else if (stepEl) {
+                // Don't remove — just hide to maintain height
+                stepEl.style.visibility = 'hidden';
+                stepEl.textContent = '\u00a0';
+            }
+
+            var oldIpEl = existing.querySelector('.queue-card-ip:first-child .queue-card-val');
+            if (oldIpEl && oldIpEl.textContent !== (e.oldIp || '---')) oldIpEl.textContent = e.oldIp || '---';
+
+            var newIpEl = existing.querySelector('.queue-card-ip:last-child .queue-card-val');
+            if (newIpEl) {
+                if (newIpEl.textContent !== (e.newIp || '---')) newIpEl.textContent = e.newIp || '---';
+                newIpEl.className = 'queue-card-val' + (e.newIp ? ' new-ip' : '');
+            }
+
+            var metaEls = existing.querySelectorAll('.queue-card-meta');
+            if (metaEls[0]) metaEls[0].innerHTML = 'Lần thử: <strong>' + e.attempts + '</strong>';
+            if (metaEls[1] && metaEls[1].textContent !== elapsed) metaEls[1].textContent = elapsed;
+
+            fragment.appendChild(existing);
+            delete existingCards[e.id];
+        } else {
+            // New card — create fresh
+            var div = document.createElement('div');
+            div.className = 'queue-card ' + statusClass;
+            div.dataset.queueId = e.id;
+            div.innerHTML =
+                '<div class="queue-card-top">' +
+                    '<span class="queue-card-session">' + e.iface + '</span>' +
+                    '<span class="queue-badge ' + statusClass + '">' + statusText + (remaining > 0 ? ' (' + remaining + 's)' : '') + '</span>' +
                 '</div>' +
-                '<svg class="queue-card-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><polyline points="12 5 19 12 12 19"/></svg>' +
-                '<div class="queue-card-ip">' +
-                    '<span class="queue-card-label">IP Mới</span>' +
-                    '<span class="queue-card-val ' + (e.newIp ? 'new-ip' : '') + '">' + (e.newIp || '---') + '</span>' +
+                '<div class="queue-card-step" style="visibility:' + (e.message ? 'visible' : 'hidden') + '">' + escapeHtml(e.message || '\u00a0') + '</div>' +
+                '<div class="queue-card-ips">' +
+                    '<div class="queue-card-ip">' +
+                        '<span class="queue-card-label">IP Cũ</span>' +
+                        '<span class="queue-card-val">' + (e.oldIp || '---') + '</span>' +
+                    '</div>' +
+                    '<svg class="queue-card-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><polyline points="12 5 19 12 12 19"/></svg>' +
+                    '<div class="queue-card-ip">' +
+                        '<span class="queue-card-label">IP Mới</span>' +
+                        '<span class="queue-card-val' + (e.newIp ? ' new-ip' : '') + '">' + (e.newIp || '---') + '</span>' +
+                    '</div>' +
                 '</div>' +
-            '</div>' +
-            '<div class="queue-card-bottom">' +
-                '<span class="queue-card-meta">Lần thử: <strong>' + e.attempts + '</strong></span>' +
-                '<span class="queue-card-meta">' + elapsed + '</span>' +
-                '<button class="queue-card-remove" onclick="removeFromQueue(' + e.id + ')" title="Huỷ">✕</button>' +
-            '</div>' +
-        '</div>';
-    }).join('');
+                '<div class="queue-card-bottom">' +
+                    '<span class="queue-card-meta">Lần thử: <strong>' + e.attempts + '</strong></span>' +
+                    '<span class="queue-card-meta">' + elapsed + '</span>' +
+                    '<button class="queue-card-remove" onclick="removeFromQueue(' + e.id + ')" title="Huỷ">✕</button>' +
+                '</div>';
+            fragment.appendChild(div);
+        }
+    });
+
+    // Remove stale cards that are no longer in entries
+    Object.values(existingCards).forEach(function(el) { el.remove(); });
+
+    // Append all in correct order
+    container.appendChild(fragment);
 }
 
 async function removeFromQueue(id) {
