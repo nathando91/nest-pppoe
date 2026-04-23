@@ -358,7 +358,7 @@ server.listen(PORT, '0.0.0.0', function() {
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
-    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids } = require('./lib/pppoe');
     var healthCheck = require('./lib/healthcheck');
 
     // Load persisted health check state (stopped sessions, etc.)
@@ -366,6 +366,9 @@ async function recoverProxies() {
 
     // Scan existing pppd processes and track PIDs (kill duplicates only)
     await scanExistingPids();
+
+    // Scan existing 3proxy processes and track PIDs
+    await scanExisting3proxyPids();
 
     // Load existing proxy tracking from previous run (preserves server sync data)
     // Entries for dead sessions will be cleaned up below

@@ -1163,6 +1163,51 @@ body {
     50% { opacity: 0.7; }
 }
 
+/* PID row inside session card */
+.session-pid-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.session-pid-badge {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-tertiary);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 2px 7px;
+    flex: 1;
+}
+
+.session-pid-badge strong {
+    color: var(--amber-400);
+}
+
+.session-pid-kill {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: inherit;
+    background: rgba(239, 68, 68, 0.08);
+    color: var(--red-400);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.session-pid-kill:hover {
+    background: rgba(239, 68, 68, 0.18);
+}
+
+
 /* Countdown badge - small pill */
 .countdown-badge {
     font-size: 10px;

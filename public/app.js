@@ -369,6 +369,33 @@ async function toggleAutoStart(enabled) {
     }
 }
 
+async function toggleSweeper(enabled) {
+    try {
+        await fetch('/api/sweeper', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        });
+        // Update configCache
+        if (configCache) configCache.sweeper = enabled;
+        showToast(enabled ? '🔄 Sweeper đã bật' : '⏸ Sweeper đã tắt', enabled ? 'success' : 'info');
+    } catch (e) {
+        showToast('Lỗi lưu sweeper config', 'error');
+        var cb = document.getElementById('ovSweeperCheckbox');
+        if (cb) cb.checked = !enabled;
+    }
+}
+
+async function killSessionPid(id) {
+    try {
+        await fetch('/api/session/' + id + '/pid', { method: 'DELETE' });
+        showToast('🔪 Đã kill PID ppp' + id, 'info');
+    } catch (e) {
+        showToast('Lỗi kill PID', 'error');
+    }
+}
+
+
 let interfacesCache = [];
 
 async function loadInterfacesForSelect() {
@@ -597,37 +624,43 @@ function renderSessionCard(s) {
     const ports = s.ports || [];
     const vipPort = s.vipPort || '';
     const regularPorts = ports.length > 1 ? ports.slice(1) : [];
+    const pid = s.pid || null;
 
     // Determine the count of port slots to always show (stabilize layout)
-    // During rotation, we may have no ports yet — use _lastPortCount to keep stable height
     var portCount = (vipPort ? 1 : 0) + regularPorts.length;
     if (!portCount && s._lastPortCount) portCount = s._lastPortCount;
     else if (portCount) s._lastPortCount = portCount;
 
-    // Build ports display (click to copy IP:port)
-    // Always render the ports grid if we have known slots, to prevent layout shift
     var sessionIp = s.ip || '';
     var portsHtml = '';
     if (portCount > 0) {
         portsHtml = '<div class="session-ports">';
-        // VIP slot
         if (vipPort) {
             portsHtml += '<div class="port-item vip" title="Click để copy ' + sessionIp + ':' + vipPort + '" onclick="copyToClipboard(\'' + sessionIp + ':' + vipPort + '\', event)"><span class="port-label">★ VIP</span><span class="port-value">' + vipPort + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
         } else if (s._lastPortCount) {
-            // Placeholder VIP slot to preserve height during rotation
             portsHtml += '<div class="port-item vip port-placeholder"><span class="port-label">★ VIP</span><span class="port-value">---</span></div>';
         }
-        // Regular port slots
         var shownPorts = regularPorts.length;
         var placeholderPorts = (s._lastPortCount ? Math.max(0, (s._lastPortCount - (vipPort || s._lastPortCount ? 1 : 0)) - shownPorts) : 0);
         for (var pi = 0; pi < regularPorts.length; pi++) {
             portsHtml += '<div class="port-item" title="Click để copy ' + sessionIp + ':' + regularPorts[pi] + '" onclick="copyToClipboard(\'' + sessionIp + ':' + regularPorts[pi] + '\', event)"><span class="port-label">P' + (pi + 1) + '</span><span class="port-value">' + regularPorts[pi] + '</span><svg class="port-copy-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>';
         }
-        // Render placeholder slots during rotation so grid doesn't collapse
         for (var ph = 0; ph < placeholderPorts; ph++) {
             portsHtml += '<div class="port-item port-placeholder"><span class="port-label">P' + (shownPorts + ph + 1) + '</span><span class="port-value">---</span></div>';
         }
         portsHtml += '</div>';
+    }
+
+    // PID badge + kill button (only when PID is known)
+    var pidHtml = '';
+    if (pid) {
+        pidHtml = `<div class="session-pid-row">
+            <span class="session-pid-badge" title="pppd PID">🔸 PID&nbsp;<strong>${pid}</strong></span>
+            <button class="session-pid-kill" onclick="killSessionPid(${s.id})" title="Kill PID ${pid}">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                Kill
+            </button>
+        </div>`;
     }
 
     return `
@@ -640,6 +673,7 @@ function renderSessionCard(s) {
             ${s.nextRetryAt && s.step === 'waiting' ? renderCountdownBadge(s.nextRetryAt) : ''}
         </div>
         <div class="session-step${stepMsg ? '' : ' session-step-empty'}">${stepMsg ? escapeHtml(stepMsg) : '&nbsp;'}</div>
+        ${pidHtml}
         <div class="session-info">
             <div class="session-field">
                 <span class="session-label">IP Address</span>
@@ -803,7 +837,7 @@ async function checkFarm(idx) {
         var data = await res.json();
         if (data.results) {
             data.results.forEach(function(r) {
-                checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+                checkResults.set(r.id, { ok: r.ok, latency: r.pppLatency || r.latency, error: r.pppError || r.error, proxyOk: r.proxyOk, time: Date.now() });
             });
         }
         showToast('Farm ' + (idx + 1) + ': ' + data.passed + '/' + data.total + ' OK', data.passed === data.total ? 'success' : 'warning');
@@ -1041,9 +1075,16 @@ function renderOverview(stats) {
     try {
         var cb = document.getElementById('ovAutoStartCheckbox');
         if (cb && cb.checked) autoChecked = ' checked';
-        // On first load, use configCache
         if (!cb && configCache && configCache.auto_start) autoChecked = ' checked';
     } catch(e) {}
+
+    // Sweeper checkbox state
+    var sweeperChecked = '';
+    try {
+        var scb = document.getElementById('ovSweeperCheckbox');
+        if (scb) sweeperChecked = scb.checked ? ' checked' : '';
+        else sweeperChecked = (configCache && configCache.sweeper !== false) ? ' checked' : '';
+    } catch(e) { sweeperChecked = ' checked'; }
 
     grid.innerHTML = `
         <div class="ov-row ov-row-controls">
@@ -1077,6 +1118,13 @@ function renderOverview(stats) {
                             <span class="toggle-slider"></span>
                         </label>
                         <span class="toggle-label">Auto Start</span>
+                    </div>
+                    <div class="auto-start-toggle" id="sweeperToggle" style="margin-left:4px">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="ovSweeperCheckbox" onchange="toggleSweeper(this.checked)"${sweeperChecked}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label" style="color:var(--purple-400)">Sweeper</span>
                     </div>
                 </div>
             </div>
@@ -1483,9 +1531,14 @@ async function checkSession(id) {
     try {
         var res = await fetch('/api/session/' + id + '/check');
         var data = await res.json();
-        checkResults.set(id, { ok: data.ok, latency: data.latency, error: data.error, time: Date.now() });
+        checkResults.set(id, { ok: data.ok, latency: data.pppLatency || data.latency, error: data.pppError || data.error, proxyOk: data.proxyOk, time: Date.now() });
+        if (data.autoFixedProxy) {
+            showToast('🔧 ppp' + id + ': 3proxy chết → đã tự restart', 'warning');
+        } else if (data.ok && !data.proxyOk) {
+            showToast('⚠️ ppp' + id + ': PPPoE OK nhưng không có config proxy', 'warning');
+        }
     } catch (e) {
-        checkResults.set(id, { ok: false, latency: 0, error: e.message, time: Date.now() });
+        checkResults.set(id, { ok: false, latency: 0, error: e.message, proxyOk: false, time: Date.now() });
     }
     clearBusy('check-' + id);
     // Re-render card
@@ -1606,7 +1659,7 @@ socket.on('status_update', (data) => {
 
 socket.on('check_progress', (data) => {
     data.results.forEach(function(r) {
-        checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+        checkResults.set(r.id, { ok: r.ok, latency: r.pppLatency || r.latency, error: r.pppError || r.error, proxyOk: r.proxyOk, time: Date.now() });
         // Update individual card
         var card = document.querySelector('[data-session-id="' + r.id + '"]');
         if (card) {
