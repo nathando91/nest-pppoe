@@ -324,7 +324,7 @@ initRemote(io);
 setInterval(function() {
     try {
         var sessions = getPPPoEStatus();
-        var stats = getSystemStats();
+        var stats = getSystemStats(sessions);
         io.emit('status_update', { sessions: sessions, stats: stats });
     } catch (e) {
         console.error('Status update error:', e.message);
