@@ -107,10 +107,7 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8l4 4-4 4"/><line x1="12" y1="16" x2="18" y2="16"/></svg>
                 Console
             </button>
-            <button class="tab" data-tab="security" id="tabSecurity">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle cx="12" cy="11" r="3"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                Bảo mật
-            </button>
+
             <button class="tab" data-tab="sync" id="tabSync">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                 Sync
@@ -355,59 +352,6 @@
             </div>
         </section>
 
-        <!-- Security Tab -->
-        <section class="tab-content" id="securityTab">
-            <div class="security-grid">
-                <!-- Stats Row -->
-                <div class="security-stats-row">
-                    <div class="stat-card">
-                        <div class="stat-icon blocked">🔒</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="secTotalBlocked">0</div>
-                            <div class="stat-label">Đang bị chặn</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon alert">⚠️</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="secTotalEvents">0</div>
-                            <div class="stat-label">Sự kiện gần đây</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Blocked IPs Card -->
-                <div class="bl-card">
-                    <div class="bl-header">
-                        <div class="bl-title">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
-                            <span>Danh sách IP bị chặn</span>
-                        </div>
-                        <button class="btn btn-sm btn-ghost" onclick="loadSecurityUI()">Làm mới</button>
-                    </div>
-                    <div class="bl-body">
-                        <div id="blockedIPsList" class="security-list">
-                            <div class="sync-empty">Không có IP nào bị chặn</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Security Events Card -->
-                <div class="bl-card" style="margin-top:16px">
-                    <div class="bl-header">
-                        <div class="bl-title">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            <span>Nhật ký bảo mật</span>
-                        </div>
-                    </div>
-                    <div class="bl-body">
-                        <div id="securityEventsList" class="security-events-list">
-                            <div class="sync-empty">Chưa có sự kiện nào</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
 
         <!-- Terminal Tab -->
         <section class="tab-content" id="terminalTab">
@@ -480,10 +424,7 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>Cài đặt</span>
         </button>
-        <button class="more-menu-item" data-tab="security" onclick="switchFromMore('security')">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle cx="12" cy="11" r="3"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <span>Bảo mật</span>
-        </button>
+
     </div>
 
     <!-- Toast Container -->
