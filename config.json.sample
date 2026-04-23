@@ -12,5 +12,6 @@
             "interface": "enp1s0f0"
         }
     ],
-    "auto_start": true
+    "auto_start": true,
+    "health_check": false
 }

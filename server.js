@@ -310,7 +310,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 registerRoutes(app, io);
 setupTerminal(io);
 rotationQueue.init(io);
-healthCheck.init(io, rotationQueue);
+var _hcConfig = readConfig();
+if (_hcConfig.health_check === true) {
+    healthCheck.init(io, rotationQueue);
+} else {
+    console.log('⚪ Health check is DISABLED (set health_check: true in config to enable)');
+}
 nestproxy.init(io);
 initRemote(io);
 
