@@ -15,7 +15,7 @@ const healthCheck = require('./lib/healthcheck');
 const nestproxy = require('./lib/nestproxy');
 const { initRemote } = require('./lib/remote');
 
-const PORT = 3000;
+const PORT = 9991;
 
 // ============ GRACEFUL SHUTDOWN ============
 // Save state on exit without killing pppd/3proxy children
@@ -32,8 +32,8 @@ function gracefulShutdown(signal) {
     process.exit(0);
 }
 
-process.on('SIGINT', function() { gracefulShutdown('SIGINT'); });
-process.on('SIGTERM', function() { gracefulShutdown('SIGTERM'); });
+process.on('SIGINT', function () { gracefulShutdown('SIGINT'); });
+process.on('SIGTERM', function () { gracefulShutdown('SIGTERM'); });
 
 // ============ APP SETUP ============
 
@@ -54,7 +54,7 @@ var loginAttempts = new Map();
 var MAX_ATTEMPTS_BEFORE_LOCK = 5;
 // Progressive lockout durations (in ms): after 5, 10, 15, 20+ failures
 var LOCKOUT_TIERS = [
-    { threshold: 5,  duration: 60 * 1000 },      // 1 minute
+    { threshold: 5, duration: 60 * 1000 },      // 1 minute
     { threshold: 10, duration: 5 * 60 * 1000 },   // 5 minutes
     { threshold: 15, duration: 15 * 60 * 1000 },  // 15 minutes
     { threshold: 20, duration: 30 * 60 * 1000 },  // 30 minutes
@@ -103,9 +103,9 @@ function getNextLockThreshold(failCount) {
 }
 
 // Clean up stale entries every 10 minutes
-setInterval(function() {
+setInterval(function () {
     var now = Date.now();
-    loginAttempts.forEach(function(info, ip) {
+    loginAttempts.forEach(function (info, ip) {
         // Remove entries that haven't had activity in 1 hour
         if (now - info.lastAttempt > 60 * 60 * 1000) {
             loginAttempts.delete(ip);
@@ -116,7 +116,7 @@ setInterval(function() {
 function parseCookies(req) {
     var cookies = {};
     var header = req.headers.cookie || '';
-    header.split(';').forEach(function(c) {
+    header.split(';').forEach(function (c) {
         var parts = c.trim().split('=');
         if (parts.length >= 2) cookies[parts[0]] = parts.slice(1).join('=');
     });
@@ -135,7 +135,7 @@ function isPasswordSet() {
 }
 
 // Login endpoint with brute-force protection
-app.post('/api/auth/login', function(req, res) {
+app.post('/api/auth/login', function (req, res) {
     var clientIP = getClientIP(req);
     var now = Date.now();
 
@@ -180,7 +180,7 @@ app.post('/api/auth/login', function(req, res) {
     var inputBuf = Buffer.from(password);
     var configBuf = Buffer.from(configPw);
     var match = inputBuf.length === configBuf.length &&
-                crypto.timingSafeEqual(inputBuf, configBuf);
+        crypto.timingSafeEqual(inputBuf, configBuf);
 
     if (match) {
         // Success — clear failed attempts
@@ -244,7 +244,7 @@ app.post('/api/auth/login', function(req, res) {
 
 // ============ SECURITY API ============
 
-app.get('/api/security/status', function(req, res) {
+app.get('/api/security/status', function (req, res) {
     if (!isAuthenticated(req)) return res.status(401).json({ error: 'Unauthorized' });
 
     var blocked = [];
@@ -258,7 +258,7 @@ app.get('/api/security/status', function(req, res) {
     });
 });
 
-app.post('/api/security/unblock', function(req, res) {
+app.post('/api/security/unblock', function (req, res) {
     if (!isAuthenticated(req)) return res.status(401).json({ error: 'Unauthorized' });
     var ip = req.body.ip;
     if (ip && blockedIPs.has(ip)) {
@@ -273,7 +273,7 @@ app.post('/api/security/unblock', function(req, res) {
 });
 
 // Check auth status (no auth required)
-app.get('/api/auth/status', function(req, res) {
+app.get('/api/auth/status', function (req, res) {
     var passwordConfigured = isPasswordSet();
     res.json({
         authenticated: !passwordConfigured || isAuthenticated(req),
@@ -282,7 +282,7 @@ app.get('/api/auth/status', function(req, res) {
 });
 
 // Logout endpoint
-app.post('/api/auth/logout', function(req, res) {
+app.post('/api/auth/logout', function (req, res) {
     var cookies = parseCookies(req);
     var token = cookies['nest_token'];
     if (token) authTokens.delete(token);
@@ -294,7 +294,7 @@ app.post('/api/auth/logout', function(req, res) {
 var INTERNAL_SECRET = crypto.randomBytes(16).toString('hex');
 
 // Auth middleware — skip if no password configured
-app.use('/api', function(req, res, next) {
+app.use('/api', function (req, res, next) {
     if (req.path.startsWith('/auth/')) return next();
     if (req.headers['x-internal-secret'] === INTERNAL_SECRET) return next();
     if (!isPasswordSet()) return next(); // No password → open access
@@ -321,7 +321,7 @@ initRemote(io);
 
 // ============ AUTO REFRESH ============
 
-setInterval(function() {
+setInterval(function () {
     try {
         var sessions = getPPPoEStatus();
         var stats = getSystemStats(sessions);
@@ -333,9 +333,18 @@ setInterval(function() {
 
 // ============ START ============
 
-function startApp() {
+server.listen(PORT, '0.0.0.0', function () {
+    console.log('');
+    console.log('🚀 Nest PPPoE Manager running at http://0.0.0.0:' + PORT);
+    console.log('   Local: http://localhost:' + PORT);
+    try {
+        var lanIp = execSync("ip -4 addr show | grep -oP 'inet \\K192\\.168\\.[\\d.]+' | head -1", { encoding: 'utf8' }).trim();
+        if (lanIp) console.log('   LAN:   http://' + lanIp + ':' + PORT);
+    } catch (err) { /* ignore */ }
+    console.log('');
+
     // Auto-recover: restart 3proxy for active PPPoE sessions
-    recoverProxies().then(function() {
+    recoverProxies().then(function () {
         // Check auto_start config
         var { readConfig } = require('./lib/config');
         var config = readConfig();
@@ -345,27 +354,7 @@ function startApp() {
             console.log('⚪ Auto Start is OFF — sessions will not auto-start');
         }
     });
-}
-
-var _startConfig = readConfig();
-if (_startConfig.local_enabled !== false) {
-    server.listen(PORT, '0.0.0.0', function() {
-        console.log('');
-        console.log('🚀 Nest PPPoE Manager running at http://0.0.0.0:' + PORT);
-        console.log('   Local: http://localhost:' + PORT);
-        try {
-            var lanIp = execSync("ip -4 addr show | grep -oP 'inet \\K192\\.168\\.[\\d.]+' | head -1", { encoding: 'utf8' }).trim();
-            if (lanIp) console.log('   LAN:   http://' + lanIp + ':' + PORT);
-        } catch (err) { /* ignore */ }
-        console.log('');
-        startApp();
-    });
-} else {
-    console.log('');
-    console.log('🚫 Local Web UI is DISABLED (local_enabled: false). Running in background mode.');
-    console.log('');
-    startApp();
-}
+});
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
