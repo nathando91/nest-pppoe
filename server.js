@@ -333,16 +333,7 @@ setInterval(function() {
 
 // ============ START ============
 
-server.listen(PORT, '0.0.0.0', function() {
-    console.log('');
-    console.log('🚀 Nest PPPoE Manager running at http://0.0.0.0:' + PORT);
-    console.log('   Local: http://localhost:' + PORT);
-    try {
-        var lanIp = execSync("ip -4 addr show | grep -oP 'inet \\K192\\.168\\.[\\d.]+' | head -1", { encoding: 'utf8' }).trim();
-        if (lanIp) console.log('   LAN:   http://' + lanIp + ':' + PORT);
-    } catch (err) { /* ignore */ }
-    console.log('');
-
+function startApp() {
     // Auto-recover: restart 3proxy for active PPPoE sessions
     recoverProxies().then(function() {
         // Check auto_start config
@@ -354,7 +345,27 @@ server.listen(PORT, '0.0.0.0', function() {
             console.log('⚪ Auto Start is OFF — sessions will not auto-start');
         }
     });
-});
+}
+
+var _startConfig = readConfig();
+if (_startConfig.local_enabled !== false) {
+    server.listen(PORT, '0.0.0.0', function() {
+        console.log('');
+        console.log('🚀 Nest PPPoE Manager running at http://0.0.0.0:' + PORT);
+        console.log('   Local: http://localhost:' + PORT);
+        try {
+            var lanIp = execSync("ip -4 addr show | grep -oP 'inet \\K192\\.168\\.[\\d.]+' | head -1", { encoding: 'utf8' }).trim();
+            if (lanIp) console.log('   LAN:   http://' + lanIp + ':' + PORT);
+        } catch (err) { /* ignore */ }
+        console.log('');
+        startApp();
+    });
+} else {
+    console.log('');
+    console.log('🚫 Local Web UI is DISABLED (local_enabled: false). Running in background mode.');
+    console.log('');
+    startApp();
+}
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig } = require('./lib/config');
