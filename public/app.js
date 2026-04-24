@@ -308,9 +308,12 @@ async function loadConfig() {
 
         renderAccounts(config.pppoe || []);
 
-        // Store auto_start in configCache for renderOverview
+        // Store config in configCache for renderOverview and saveConfig
         if (!configCache) configCache = config;
-        else configCache.auto_start = config.auto_start;
+        else {
+            configCache.auto_start = config.auto_start;
+            configCache.sweeper = config.sweeper;
+        }
 
         // Set auto-start toggle state (checkbox is inside overview, may not exist yet)
         var autoCheckbox = document.getElementById('ovAutoStartCheckbox');
@@ -491,7 +494,8 @@ async function saveConfig() {
         server_api_key: (configCache && configCache.server_api_key) || '',
         server_enabled: !!(configCache && configCache.server_enabled),
         remote_url: document.getElementById('remoteHubUrl') ? document.getElementById('remoteHubUrl').value.trim() : (configCache && configCache.remote_url) || 'http://localhost:3001',
-        remote_enabled: document.getElementById('remoteHubToggle') ? document.getElementById('remoteHubToggle').checked : (configCache && configCache.remote_enabled !== false)
+        remote_enabled: document.getElementById('remoteHubToggle') ? document.getElementById('remoteHubToggle').checked : (configCache && configCache.remote_enabled !== false),
+        sweeper: configCache && configCache.sweeper !== undefined ? configCache.sweeper : true
     };
 
     try {
