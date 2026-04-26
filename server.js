@@ -357,8 +357,8 @@ server.listen(PORT, '0.0.0.0', function () {
 });
 
 async function recoverProxies() {
-    var { getTotalSessions, readConfig } = require('./lib/config');
-    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids } = require('./lib/pppoe');
+    var { getTotalSessions, readConfig, PROXY_DIR } = require('./lib/config');
+    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids, spawnProxyWithGuard, shellExec: pppoeShellExec } = require('./lib/pppoe');
     var healthCheck = require('./lib/healthcheck');
 
     // Load persisted health check state (stopped sessions, etc.)
@@ -405,7 +405,8 @@ async function recoverProxies() {
             // Has IP — setup proxy
             if (isPrivateIP(ip)) {
                 cgnatSessions.push(i);
-                console.log('   ⚠️ ppp' + i + ' has CGNAT IP (' + ip + '), skipping proxy setup');
+                console.log('   ⚠️ ppp' + i + ' has CGNAT IP (' + ip + ') — killing pppd');
+                killPppd(i).catch(function() {});
                 continue;
             }
             // Mark as started so health check monitors it
@@ -416,27 +417,66 @@ async function recoverProxies() {
             if (existingTracking && existingTracking.ip === ip && existingTracking.proxyIds && existingTracking.proxyIds.length > 0) {
                 // Session still alive with same IP — skip re-sync
                 preservedSessions.push(i);
-                // Still ensure 3proxy is running for this session
+                // Still ensure 3proxy is running for this session — REUSE EXISTING PORTS
                 if (!alreadyRunning) {
-                    try {
-                        var result = await setupProxy(i, ip);
+                    var cfgFilePreserved = path.join(PROXY_DIR, '3proxy_ppp' + i + '_active.cfg');
+                    if (fs.existsSync(cfgFilePreserved)) {
+                        // Active config exists — reuse same ports, just restart 3proxy
+                        // Also ensure policy routing is set up
+                        var tableP = 100 + i;
+                        try { execSync('ip route replace default dev ' + iface + ' table ' + tableP + ' 2>/dev/null'); } catch(e) {}
+                        try { execSync('ip rule del from ' + ip + ' 2>/dev/null'); } catch(e) {}
+                        try { execSync('ip rule add from ' + ip + ' table ' + tableP); } catch(e) {}
+                        spawnProxyWithGuard(i, cfgFilePreserved);
+                        console.log('   ♻️ ppp' + i + ' recovered with SAME ports (preserved tracking)');
                         recovered++;
-                    } catch (e) {
-                        console.error('   ❌ ppp' + i + ' 3proxy recovery failed:', e.message);
+                    } else {
+                        // No active config — must generate new ports
+                        try {
+                            var result = await setupProxy(i, ip);
+                            recovered++;
+                        } catch (e) {
+                            console.error('   ❌ ppp' + i + ' 3proxy recovery failed:', e.message);
+                        }
                     }
                 }
                 continue;
             }
 
             if (!alreadyRunning) {
-                try {
-                    var result = await setupProxy(i, ip);
-                    recovered++;
-                    if (result && result.ports) {
-                        healthySessions.push({ id: i, ip: ip, ports: result.ports });
+                // Try to reuse existing active config (same IP = same ports)
+                var cfgFileRecover = path.join(PROXY_DIR, '3proxy_ppp' + i + '_active.cfg');
+                var reusedPorts = false;
+                if (fs.existsSync(cfgFileRecover)) {
+                    try {
+                        var cfgContent = fs.readFileSync(cfgFileRecover, 'utf8');
+                        var ipMatch = cfgContent.match(/^# IP: (.+)$/m);
+                        var portsMatch = cfgContent.match(/^# Ports: (.+)$/m);
+                        if (ipMatch && ipMatch[1].trim() === ip && portsMatch) {
+                            // Same IP — reuse existing ports!
+                            var tableR = 100 + i;
+                            await pppoeShellExec('ip route replace default dev ' + iface + ' table ' + tableR + ' 2>/dev/null');
+                            await pppoeShellExec('ip rule del from ' + ip + ' 2>/dev/null');
+                            await pppoeShellExec('ip rule add from ' + ip + ' table ' + tableR);
+                            spawnProxyWithGuard(i, cfgFileRecover);
+                            var reusedPortsList = portsMatch[1].trim().split(',').map(Number);
+                            healthySessions.push({ id: i, ip: ip, ports: reusedPortsList });
+                            console.log('   ♻️ ppp' + i + ' recovered with SAME ports: ' + portsMatch[1].trim());
+                            recovered++;
+                            reusedPorts = true;
+                        }
+                    } catch (e) { /* config unreadable, fall through to setupProxy */ }
+                }
+                if (!reusedPorts) {
+                    try {
+                        var result = await setupProxy(i, ip);
+                        recovered++;
+                        if (result && result.ports) {
+                            healthySessions.push({ id: i, ip: ip, ports: result.ports });
+                        }
+                    } catch (e) {
+                        console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
                     }
-                } catch (e) {
-                    console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
                 }
             } else {
                 // 3proxy already running — read existing port config
@@ -487,7 +527,8 @@ async function recoverProxies() {
                         }
                         console.log('   ✅ ppp' + wId + ' got IP: ' + wIp);
                     } else {
-                        console.log('   ⚠️ ppp' + wId + ' got CGNAT IP: ' + wIp);
+                        console.log('   ⚠️ ppp' + wId + ' got CGNAT IP: ' + wIp + ' — killing pppd');
+                        killPppd(wId).catch(function() {});
                     }
                     gotIp = true;
                     break;
