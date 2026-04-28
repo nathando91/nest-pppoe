@@ -358,7 +358,7 @@ server.listen(PORT, '0.0.0.0', function () {
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig, PROXY_DIR } = require('./lib/config');
-    var { getSessionIP, setupProxy, getProxyPorts, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids, spawnProxyWithGuard, shellExec: pppoeShellExec } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, getProxyPorts, getProxyPid, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids, spawnProxyWithGuard, shellExec: pppoeShellExec } = require('./lib/pppoe');
     var healthCheck = require('./lib/healthcheck');
 
     // Load persisted health check state (stopped sessions, etc.)
@@ -385,18 +385,7 @@ async function recoverProxies() {
     // Track healthy sessions for nestproxy sync (only those NOT already tracked)
     var healthySessions = [];
 
-    // Check if any 3proxy is already running
-    var alreadyRunning = false;
-    try {
-        var proxyCount = execSync('pgrep -c 3proxy 2>/dev/null || echo 0', { encoding: 'utf8' }).trim();
-        if (parseInt(proxyCount) > 0) {
-            alreadyRunning = true;
-        }
-    } catch (e) { /* ignore */ }
-
-    if (!alreadyRunning) {
-        console.log('🔄 Auto-recovering 3proxy for active sessions...');
-    }
+    console.log('🔄 Checking 3proxy for active sessions...');
 
     for (var i = 0; i < total; i++) {
         var iface = 'ppp' + i;
@@ -412,17 +401,21 @@ async function recoverProxies() {
             // Mark as started so health check monitors it
             healthCheck.markStarted(i);
 
+            // Check if 3proxy is already running for THIS specific session
+            var proxyRunning = !!getProxyPid(i);
+
             // Check if this session already has valid tracking from previous run
             var existingTracking = nestproxy.getSessionTracking(i);
             if (existingTracking && existingTracking.ip === ip && existingTracking.proxyIds && existingTracking.proxyIds.length > 0) {
                 // Session still alive with same IP — skip re-sync
                 preservedSessions.push(i);
-                // Still ensure 3proxy is running for this session — REUSE EXISTING PORTS
-                if (!alreadyRunning) {
+                if (proxyRunning) {
+                    // 3proxy survived restart — nothing to do
+                    console.log('   ✅ ppp' + i + ' preserved (3proxy alive, PID ' + getProxyPid(i) + ')');
+                } else {
+                    // 3proxy died during restart — respawn from active config
                     var cfgFilePreserved = path.join(PROXY_DIR, '3proxy_ppp' + i + '_active.cfg');
                     if (fs.existsSync(cfgFilePreserved)) {
-                        // Active config exists — reuse same ports, just restart 3proxy
-                        // Also ensure policy routing is set up
                         var tableP = 100 + i;
                         try { execSync('ip route replace default dev ' + iface + ' table ' + tableP + ' 2>/dev/null'); } catch(e) {}
                         try { execSync('ip rule del from ' + ip + ' 2>/dev/null'); } catch(e) {}
@@ -431,7 +424,6 @@ async function recoverProxies() {
                         console.log('   ♻️ ppp' + i + ' recovered with SAME ports (preserved tracking)');
                         recovered++;
                     } else {
-                        // No active config — must generate new ports
                         try {
                             var result = await setupProxy(i, ip);
                             recovered++;
@@ -443,8 +435,14 @@ async function recoverProxies() {
                 continue;
             }
 
-            if (!alreadyRunning) {
-                // Try to reuse existing active config (same IP = same ports)
+            if (proxyRunning) {
+                // 3proxy already running for this session — just read port config
+                var portInfo = getProxyPorts(i);
+                if (portInfo && portInfo.ports && portInfo.ports.length > 0) {
+                    healthySessions.push({ id: i, ip: ip, ports: portInfo.ports.map(Number) });
+                }
+            } else {
+                // 3proxy not running — try to reuse existing active config
                 var cfgFileRecover = path.join(PROXY_DIR, '3proxy_ppp' + i + '_active.cfg');
                 var reusedPorts = false;
                 if (fs.existsSync(cfgFileRecover)) {
@@ -453,7 +451,6 @@ async function recoverProxies() {
                         var ipMatch = cfgContent.match(/^# IP: (.+)$/m);
                         var portsMatch = cfgContent.match(/^# Ports: (.+)$/m);
                         if (ipMatch && ipMatch[1].trim() === ip && portsMatch) {
-                            // Same IP — reuse existing ports!
                             var tableR = 100 + i;
                             await pppoeShellExec('ip route replace default dev ' + iface + ' table ' + tableR + ' 2>/dev/null');
                             await pppoeShellExec('ip rule del from ' + ip + ' 2>/dev/null');
@@ -478,12 +475,6 @@ async function recoverProxies() {
                         console.error('   ❌ ppp' + i + ' recovery failed:', e.message);
                     }
                 }
-            } else {
-                // 3proxy already running — read existing port config
-                var portInfo = getProxyPorts(i);
-                if (portInfo && portInfo.ports && portInfo.ports.length > 0) {
-                    healthySessions.push({ id: i, ip: ip, ports: portInfo.ports.map(Number) });
-                }
             }
         } else {
             // No IP — check if pppd is running (waiting for PADO)
@@ -505,7 +496,7 @@ async function recoverProxies() {
         console.log('🔒 Preserved ' + preservedSessions.length + ' session(s) from previous run: ppp' + preservedSessions.join(', ppp'));
     }
 
-    if (!alreadyRunning && recovered > 0) {
+    if (recovered > 0) {
         console.log('✅ Recovered 3proxy for ' + recovered + '/' + total + ' sessions');
         io.emit('refresh');
     }

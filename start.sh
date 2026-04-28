@@ -34,25 +34,23 @@ if ! command -v node &>/dev/null; then
 fi
 
 #============================================================
-# Stop existing instance (if running)
+# Check if process already exists in PM2
 #============================================================
-echo -e "${YELLOW}  ▸ Stopping existing instance...${NC}"
-pm2 stop "$APP_NAME" 2>/dev/null || true
-pm2 delete "$APP_NAME" 2>/dev/null || true
-
-#============================================================
-# Start with PM2
-#============================================================
-echo -e "${GREEN}  ▸ Starting $APP_NAME with PM2...${NC}"
 cd "$PROJECT_DIR"
 
-pm2 start server.js \
-    --name "$APP_NAME" \
-    --cwd "$PROJECT_DIR" \
-    --time \
-    --restart-delay 3000 \
-    --max-restarts 50 \
-    --exp-backoff-restart-delay 1000
+if pm2 describe "$APP_NAME" &>/dev/null; then
+    #========================================================
+    # Process exists → Restart
+    #========================================================
+    echo -e "${YELLOW}  ▸ $APP_NAME is already registered in PM2, restarting...${NC}"
+    pm2 restart "$APP_NAME"
+else
+    #========================================================
+    # Process doesn't exist → Start fresh
+    #========================================================
+    echo -e "${GREEN}  ▸ Starting $APP_NAME with PM2...${NC}"
+    pm2 start ecosystem.config.js --cwd "$PROJECT_DIR"
+fi
 
 #============================================================
 # Save PM2 process list
