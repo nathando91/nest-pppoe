@@ -310,12 +310,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 registerRoutes(app, io);
 setupTerminal(io);
 rotationQueue.init(io);
-var _hcConfig = readConfig();
-if (_hcConfig.health_check === true) {
-    healthCheck.init(io, rotationQueue);
-} else {
-    console.log('⚪ Health check is DISABLED (set health_check: true in config to enable)');
-}
+// Health check is always enabled — critical for system stability
+// (3proxy crash recovery, IP mismatch detection, connectivity monitoring)
+healthCheck.init(io, rotationQueue);
+console.log('🏥 Health check is ENABLED (always on)');
 nestproxy.init(io);
 initRemote(io);
 
@@ -358,7 +356,7 @@ server.listen(PORT, '0.0.0.0', function () {
 
 async function recoverProxies() {
     var { getTotalSessions, readConfig, PROXY_DIR } = require('./lib/config');
-    var { getSessionIP, setupProxy, getProxyPorts, getProxyPid, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids, spawnProxyWithGuard, shellExec: pppoeShellExec } = require('./lib/pppoe');
+    var { getSessionIP, setupProxy, getProxyPorts, getProxyPid, connectPppoe, sleep, isPrivateIP, scanExistingPids, scanExisting3proxyPids, spawnProxyWithGuard, killPppd, shellExec: pppoeShellExec } = require('./lib/pppoe');
     var healthCheck = require('./lib/healthcheck');
 
     // Load persisted health check state (stopped sessions, etc.)
