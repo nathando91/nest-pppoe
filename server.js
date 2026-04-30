@@ -389,6 +389,13 @@ async function recoverProxies() {
 
     for (var i = 0; i < total; i++) {
         var iface = 'ppp' + i;
+        
+        // SKIP if session was manually stopped (respect persisted state)
+        if (healthCheck.isStopped && healthCheck.isStopped(i)) {
+            console.log('   ⚪ ppp' + i + ' is manually STOPPED — skipping recovery');
+            continue;
+        }
+
         var ip = await getSessionIP(iface);
         if (ip) {
             // Has IP — setup proxy
