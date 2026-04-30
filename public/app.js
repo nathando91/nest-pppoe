@@ -1593,7 +1593,7 @@ async function checkAll() {
         var data = await res.json();
         // Results will be applied via socket events, but also handle here as fallback
         data.results.forEach(function(r) {
-            checkResults.set(r.id, { ok: r.ok, latency: r.latency, error: r.error, time: Date.now() });
+            checkResults.set(r.id, { ok: r.ok, latency: r.pppLatency || r.latency, error: r.pppError || r.error, proxyOk: r.proxyOk, time: Date.now() });
         });
         renderSessions(sessionsData);
         showToast('✅ Check hoàn tất: ' + data.passed + '/' + data.total + ' OK', data.passed === data.total ? 'success' : 'warning');
